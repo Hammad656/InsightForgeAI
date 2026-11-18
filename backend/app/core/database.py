@@ -15,4 +15,4 @@ def get_engine() -> Engine:
     url = get_settings().database_url
     if not url:
         raise RuntimeError("DATABASE_URL is required")
-    return create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 3})
+    return create_engine(url, pool_pre_ping=True, hide_parameters=True, connect_args={"connect_timeout": 3})

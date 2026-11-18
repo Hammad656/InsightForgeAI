@@ -1,0 +1,3 @@
+line_id,order_id,customer_id,sku,branch_id,ordered_on,quantity,unit_price,discount,unit_cost,status,currency
+L-001,O-001,C-001,SKU-001,BR-01,2026-10-05,4,250.00,0.00,120.00,completed,PKR
+L-002,O-002,C-002,SKU-002,BR-01,2026-10-06,2,400.00,25.00,220.00,completed,PKR

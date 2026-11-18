@@ -6,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    cookie_secure: bool = True
     database_url: str = ""
     migration_database_url: str = ""
     redis_url: str = "redis://localhost:6379/0"
