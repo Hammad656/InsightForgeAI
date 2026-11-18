@@ -1,0 +1,46 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci_owner
+          POSTGRES_PASSWORD: ci_only_password
+          POSTGRES_DB: insightforge_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      MIGRATION_DATABASE_URL: postgresql+psycopg://ci_owner:ci_only_password@localhost:5432/insightforge_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install pip==26.2
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check app tests alembic
+      - run: python -m pytest
+      - run: alembic upgrade head
+      - run: alembic current
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
