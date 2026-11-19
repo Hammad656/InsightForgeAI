@@ -88,3 +88,15 @@ The tenant-scoped endpoints are `GET /api/v1/organizations/{org_id}/metrics` and
 The period defaults to the current calendar month in Asia/Karachi. The as-of date defaults to the earlier of today and the last day in the selected period. To reproduce the shipped sample, select October 1 through November 1, 2026 with October 31 as the as-of date. Expected totals include PKR 1,775 net revenue, PKR 855 gross profit, 20 units on hand, and PKR 475 outstanding and overdue.
 
 Run `python -m pytest -v` with the integration flags above to include the deterministic KPI fixtures and tenant authorization checks. The M3 fixture checks cover exact decimal arithmetic, date and ageing boundaries, source publication changes, and role-scoped reads.
+
+## M4 Ask AI
+
+Open **Ask AI** from Business analytics. Questions support one governed metric at a time. Supported groupings include sales by day, SKU, branch or customer, stock on hand by SKU or branch, and receivables ageing. Filters use exact source IDs. Published snapshot IDs can be supplied as `dataset_ids` to constrain a request to an eligible active snapshot. Unsupported questions and unavailable data are reported explicitly.
+
+The API uses `POST /api/v1/ai/queries` to submit a question with `organization_id` and `question`. Use `GET /api/v1/ai/queries?organization_id=…` for private history or `GET /api/v1/ai/queries/{query_id}?organization_id=…` for one saved result. History is scoped to both the organization and the original author. There is no shared result cache or export endpoint.
+
+Apply `alembic upgrade head` with a migration account authorized to provision the reporting roles. Migration `0003_m4` creates `insightforge_reporting` with login disabled. As the database owner, enable its login, set a password interactively with psql's `\password insightforge_reporting`, and grant it `CONNECT` on the application database if public database access is revoked. Supply that login through `REPORTING_DATABASE_URL` in the API environment. Keep the operational and reporting credentials distinct.
+
+AI is disabled by default. Enable OpenAI explicitly with `AI_PROVIDER=openai`, a server-only `OPENAI_API_KEY`, and a compatible Structured Outputs model in `OPENAI_MODEL`. The provider receives the submitted question and approved public metric definitions. Keep confidential details out of questions. The explanation call receives result-shape flags. The application inserts verified values and labels into the selected explanation format locally. The model supplies typed intent and has no SQL execution authority.
+
+Run `python -m pytest -v` with `M4_INTEGRATION=1`, `REPORTING_DATABASE_URL`, and the M2 integration configuration to exercise the full suite. The M4 gold cases use mocked provider responses and independently calculated fixture totals. They verify the typed-intent-to-result path, explanation grounding, and usage reporting. Live-model interpretation quality requires a separately authorized evaluation.

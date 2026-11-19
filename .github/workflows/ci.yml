@@ -28,6 +28,8 @@ jobs:
       COOKIE_SECURE: "false"
       M2_INTEGRATION: "1"
       M2_LIVE_WORKER: "1"
+      M4_INTEGRATION: "1"
+      REPORTING_DATABASE_URL: postgresql+psycopg://insightforge_reporting:ci_reporting_only@localhost:5432/insightforge_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,6 +46,8 @@ jobs:
           alembic current
           alembic upgrade head
           alembic current
+          PGPASSWORD=ci_only_password psql -h localhost -U ci_owner -d insightforge_test -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE insightforge_reporting LOGIN PASSWORD 'ci_reporting_only'"
       - run: |
           celery -A app.jobs.celery_app:celery_app worker --pool=solo --loglevel=WARNING > /tmp/insightforge-worker.log 2>&1 &
           trap 'kill $! 2>/dev/null || true' EXIT

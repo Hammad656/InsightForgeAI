@@ -237,7 +237,10 @@ export default function AnalyticsPage() {
   return <main className="mx-auto grid max-w-7xl gap-5 px-4 py-8 sm:px-8">
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <Link href="/workspace" className="text-sm font-semibold text-teal-800 hover:underline">Workspace</Link>
+        <nav aria-label="Workspace navigation" className="flex gap-4 text-sm font-semibold text-teal-800">
+          <Link href="/workspace" className="hover:underline">Workspace</Link>
+          <Link href="/ask" className="hover:underline">Ask AI</Link>
+        </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Business analytics</h1>
       </div>
       {organization && <label className="grid gap-1 text-sm">Organization

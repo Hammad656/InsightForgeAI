@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 
-from app.api.v1 import analytics, auth, datasets, organizations
+from app.api.v1 import ai, analytics, auth, datasets, organizations
 from app.api.v1.health import router
 from app.core.config import get_settings
 from app.core.upload_limit import UploadBodyLimit
@@ -20,7 +20,7 @@ app.add_middleware(
 )
 app.include_router(router, prefix="/api/v1")
 
-for application_router in (auth.router, organizations.router, datasets.router, analytics.router):
+for application_router in (auth.router, organizations.router, datasets.router, analytics.router, ai.router):
     app.include_router(application_router, prefix="/api/v1")
 
 
@@ -34,6 +34,6 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 @app.middleware("http")
 async def protect_private_responses(request: Request, call_next: RequestResponseEndpoint) -> Response:
     response = await call_next(request)
-    if request.url.path.startswith(("/api/v1/auth/", "/api/v1/organizations")):
+    if request.url.path.startswith(("/api/v1/auth/", "/api/v1/organizations", "/api/v1/ai/")):
         response.headers["Cache-Control"] = "private, no-store"
     return response

@@ -1,4 +1,5 @@
 """Fixed, parameterized PostgreSQL reports over immutable dataset versions."""
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy import Connection, text
@@ -69,8 +70,11 @@ def rows(db: Connection, query: str, params: dict[str, Any]) -> list[dict[str, A
     return [dict(row) for row in db.execute(text(query), params).mappings()]
 
 
-def sales(db: Connection, params: dict[str, Any], details: bool) -> dict[str, Any]:
-    metrics = rows(db, SALES_ROWS + f""",
+ReadRows = Callable[[Connection, str, dict[str, Any]], list[dict[str, Any]]]
+
+
+def sales(db: Connection, params: dict[str, Any], details: bool, read: ReadRows = rows) -> dict[str, Any]:
+    metrics = read(db, SALES_ROWS + f""",
         current_period AS (SELECT {SALES_AGGREGATES} FROM selected),
         prior_period AS (
             SELECT COALESCE(sum(quantity*unit_price-discount), 0) AS prior_net
@@ -85,20 +89,20 @@ def sales(db: Connection, params: dict[str, Any], details: bool) -> dict[str, An
     """, params)[0]
     result: dict[str, Any] = {
         "metrics": metrics,
-        "trend": rows(db, SALES_ROWS + f"""
+        "trend": read(db, SALES_ROWS + f"""
             SELECT day, {SALES_AGGREGATES} FROM selected GROUP BY day ORDER BY day
         """, params),
     }
     if details:
-        result["breakdown"] = rows(db, SALES_ROWS + f"""
+        result["breakdown"] = read(db, SALES_ROWS + f"""
             SELECT branch, sku, {SALES_AGGREGATES}
             FROM selected GROUP BY branch, sku ORDER BY net_revenue DESC, branch, sku LIMIT 100
         """, params)
     return result
 
 
-def inventory(db: Connection, params: dict[str, Any], details: bool) -> dict[str, Any]:
-    metrics = rows(db, INVENTORY_ROWS + f"""
+def inventory(db: Connection, params: dict[str, Any], details: bool, read: ReadRows = rows) -> dict[str, Any]:
+    metrics = read(db, INVENTORY_ROWS + f"""
         SELECT COALESCE(sum(stock_on_hand), 0) AS stock_on_hand,
                {INVENTORY[3].sql} AS low_stock,
                (SELECT count(*) FROM movements WHERE day>=:start AND day<:end AND day<=:as_of)
@@ -108,11 +112,11 @@ def inventory(db: Connection, params: dict[str, Any], details: bool) -> dict[str
     metrics["available_stock"] = None
     result: dict[str, Any] = {"metrics": metrics}
     if details:
-        result["positions"] = rows(db, INVENTORY_ROWS + """
+        result["positions"] = read(db, INVENTORY_ROWS + """
             SELECT *, stock_on_hand<=:threshold AS low_stock
             FROM positions ORDER BY stock_on_hand, branch, sku LIMIT 100
         """, params)
-        result["movements"] = rows(db, INVENTORY_ROWS + """
+        result["movements"] = read(db, INVENTORY_ROWS + """
             SELECT movement_type, count(*) AS movement_count, sum(quantity) AS net_quantity
             FROM movements WHERE day>=:start AND day<:end AND day<=:as_of
             GROUP BY movement_type ORDER BY movement_type
@@ -120,18 +124,18 @@ def inventory(db: Connection, params: dict[str, Any], details: bool) -> dict[str
     return result
 
 
-def receivables(db: Connection, params: dict[str, Any], details: bool) -> dict[str, Any]:
+def receivables(db: Connection, params: dict[str, Any], details: bool, read: ReadRows = rows) -> dict[str, Any]:
     expressions = ", ".join(f"{metric.sql} AS {metric.metric_id}" for metric in RECEIVABLES[:4])
     result: dict[str, Any] = {
-        "metrics": rows(db, RECEIVABLES_ROWS + f"SELECT {expressions} FROM aged", params)[0],
-        "ageing": rows(db, RECEIVABLES_ROWS + """
+        "metrics": read(db, RECEIVABLES_ROWS + f"SELECT {expressions} FROM aged", params)[0],
+        "ageing": read(db, RECEIVABLES_ROWS + """
             SELECT bins.bucket, COALESCE(sum(aged.balance), 0) AS balance
             FROM (VALUES (0,'Current'),(1,'1–30'),(2,'31–60'),(3,'61–90'),(4,'91+')) bins(sort,bucket)
             LEFT JOIN aged ON aged.bucket=bins.bucket GROUP BY bins.sort,bins.bucket ORDER BY bins.sort
         """, params),
     }
     if details:
-        result["invoices"] = rows(db, RECEIVABLES_ROWS + """
+        result["invoices"] = read(db, RECEIVABLES_ROWS + """
             SELECT * FROM aged ORDER BY due_on, invoice LIMIT 100
         """, params)
     return result
