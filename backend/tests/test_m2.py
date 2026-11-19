@@ -10,8 +10,9 @@ from fastapi.testclient import TestClient
 from openpyxl import Workbook
 from redis import Redis
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
-from app.api.v1.auth import digest
+from app.api.v1.auth import digest, password_hash
 from app.core.config import get_settings
 from app.core.database import get_engine
 from app.core.tenant import set_org
@@ -22,6 +23,41 @@ from app.main import app
 HEADERS = {"Origin": "http://localhost:3000", "X-CSRF": "1"}
 SAMPLES = Path(__file__).resolve().parents[2] / "frontend/public/samples"
 PASSWORD = "synthetic-test-password"
+
+
+@pytest.mark.parametrize("content", [
+    b"sku\n=1+1\n",
+    b"sku\n+1+1\n",
+    b"sku\n-1+1\n",
+    b"sku\n@SUM(A1)\n",
+    b"=1+1\nsample\n",
+])
+def test_csv_rejects_formulas(content: bytes) -> None:
+    with pytest.raises(InvalidFile, match="Spreadsheet formulas"):
+        parse("formula.csv", content)
+
+
+def test_csv_preserves_signed_numbers() -> None:
+    assert parse("inventory.csv", b"quantity\n-1\n+2.25\n") == (["quantity"], [["-1"], ["+2.25"]])
+
+
+@pytest.mark.parametrize(("filename", "content"), [
+    ("data.txt", b"sku\nexample\n"),
+    ("data.csv", b'sku\n"unterminated\n'),
+    ("data.csv", b"sku,sku\na,b\n"),
+    ("data.csv", b"sku,branch\na\n"),
+])
+def test_invalid_tabular_layout(filename: str, content: bytes) -> None:
+    with pytest.raises(InvalidFile):
+        parse(filename, content)
+
+
+@pytest.mark.parametrize(("field", "value"), [("sku", ""), ("quantity", "not a number")])
+def test_invalid_inventory_fields(field: str, value: str) -> None:
+    headers, rows = parse("inventory.csv", (SAMPLES / "inventory.csv").read_bytes())
+    rows[0][headers.index(field)] = value
+    _, errors = validate("inventory", {name: name for name in headers}, headers, rows)
+    assert errors == [{"row": 2, "message": f"Invalid {field}"}]
 
 
 def test_csv_fixtures_and_xlsx() -> None:
@@ -60,7 +96,9 @@ def register(client):
     body = {"email": f"{uuid4()}@example.test", "password": PASSWORD}
     response = client.post("/api/v1/auth/register", json=body)
     assert response.status_code == 201, response.text
-    assert all("HttpOnly" in cookie for cookie in response.headers.get_list("set-cookie"))
+    cookies = response.headers.get_list("set-cookie")
+    assert len(cookies) == 2
+    assert all("HttpOnly" in cookie and "SameSite=lax" in cookie and "Path=/api/v1" in cookie for cookie in cookies)
     return body
 
 
@@ -72,6 +110,8 @@ def org(client):
 
 def test_session_lifecycle(integration) -> None:
     client, replay = integration
+    assert client.get("/api/v1/auth/me").status_code == 401
+    assert client.get(f"/api/v1/organizations/{uuid4()}/datasets").status_code == 401
     credentials = register(client)
     refresh = client.cookies.get("if_refresh")
     access = client.cookies.get("if_access")
@@ -79,6 +119,11 @@ def test_session_lifecycle(integration) -> None:
     assert response.status_code == 403
     assert client.post("/api/v1/auth/refresh", headers={"X-CSRF": ""}).status_code == 403
     with get_engine().begin() as db:
+        stored_hash = db.execute(text("SELECT password_hash FROM app.users WHERE email=:email"),
+                                 credentials).scalar_one()
+        salt, hashed_password = stored_hash.split(":")
+        assert len(bytes.fromhex(salt)) == 16
+        assert hashed_password == password_hash(PASSWORD, salt)
         db.execute(text("""
             UPDATE app.sessions SET access_until=now()-interval '1 second'
             WHERE user_id=(SELECT id FROM app.users WHERE email=:email)
@@ -98,6 +143,13 @@ def test_session_lifecycle(integration) -> None:
     assert replay.post("/api/v1/auth/refresh").status_code == 401
     assert client.post("/api/v1/auth/login", json={**credentials, "password": "incorrect-password"}).status_code == 401
     assert client.post("/api/v1/auth/login", json=credentials).status_code == 200
+    with get_engine().begin() as db:
+        db.execute(text("""
+            UPDATE app.sessions SET expires_at=now()-interval '1 second'
+            WHERE refresh_hash=:refresh
+        """), {"refresh": digest(client.cookies.get("if_refresh"))})
+    assert client.get("/api/v1/auth/me").status_code == 401
+    assert client.post("/api/v1/auth/refresh").status_code == 401
     # Prime the account counter without running repeated password hashes.
     with Redis.from_url(get_settings().redis_url) as redis:
         redis.set(f"if:auth:account:{digest(credentials['email'])}", 12, ex=60)
@@ -163,12 +215,26 @@ def test_tenant_api_worker_and_atomic_publication(integration, monkeypatch) -> N
     assert second.get(b + "/datasets").json() == []
     with get_engine().begin() as db:
         assert db.execute(text("SELECT current_user")).scalar_one() == "insightforge_app"
+        assert tuple(db.execute(text("""
+            SELECT rolsuper, rolbypassrls, rolcreatedb, rolcreaterole
+            FROM pg_roles WHERE rolname=current_user
+        """)).one()) == (False, False, False, False)
+        assert db.execute(text("""
+            SELECT count(*) FROM pg_class
+            WHERE oid IN ('app.uploads'::regclass, 'app.import_jobs'::regclass,
+                          'app.datasets'::regclass, 'biz.dataset_versions'::regclass,
+                          'biz.dataset_rows'::regclass)
+            AND relrowsecurity AND relforcerowsecurity
+            AND relowner <> (SELECT oid FROM pg_roles WHERE rolname=current_user)
+        """)).scalar_one() == 5
         assert db.execute(text("SELECT count(*) FROM app.uploads")).scalar_one() == 0
         set_org(db, UUID(bid))
         for table in ("app.uploads", "app.import_jobs", "biz.dataset_versions", "biz.dataset_rows"):
             assert db.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() == 0
         result = db.execute(text("UPDATE app.import_jobs SET status='failed' WHERE id=:id"), {"id": UUID(job)})
         assert result.rowcount == 0
+        with pytest.raises(ProgrammingError, match="row-level security"), db.begin_nested():
+            db.execute(text("INSERT INTO app.datasets (org_id,domain) VALUES (:org,'inventory')"), {"org": UUID(aid)})
         set_org(db, UUID(aid))
         assert db.execute(text("SELECT count(*) FROM biz.dataset_rows")).scalar_one() == 2
 
@@ -205,6 +271,7 @@ def test_tenant_api_worker_and_atomic_publication(integration, monkeypatch) -> N
     assert first.patch(a + f"/members/{first_id}", json={"role": "viewer"}).status_code == 409
     uid = second.get("/api/v1/auth/me").json()["id"]
     assert first.patch(a + f"/members/{uid}", json={"role": "analyst"}).status_code == 204
+    assert second.get(a + "/datasets").status_code == 200
     assert second.post(a + "/datasets/imports", json=payload).status_code == 403
     assert first.delete(a + f"/members/{uid}").status_code == 204
     assert second.get(a + "/datasets").status_code == 404

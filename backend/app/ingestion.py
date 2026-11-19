@@ -26,6 +26,7 @@ MAX_BYTES = 5 * 1024**2
 MAX_ROWS = 10_000
 MAX_COLUMNS = 64
 MAX_CELL = 1024
+SIGNED_NUMBER = re.compile(r"[+-][0-9]+(?:\.[0-9]+)?")
 
 
 class InvalidFile(ValueError):
@@ -82,6 +83,12 @@ def parse(filename: str, content: bytes) -> tuple[list[str], list[list[str]]]:
             rows.append([str(cell).strip() for cell in row] + [""] * (len(headers) - len(row)))
         if not rows or any(len(cell) > MAX_CELL or "\x00" in cell for row in [headers, *rows] for cell in row):
             raise InvalidFile("File must have data rows and cells of at most 1,024 characters")
+        if any(
+            cell.startswith(("=", "+", "-", "@")) and not SIGNED_NUMBER.fullmatch(cell)
+            for row in [headers, *rows]
+            for cell in row
+        ):
+            raise InvalidFile("Spreadsheet formulas are not supported")
         return headers, rows
     except InvalidFile:
         raise
