@@ -72,3 +72,19 @@ The sample headers define the required fields. Use ISO dates, PKR for sales and 
 M2 stores original upload bytes in tenant-scoped PostgreSQL staging with a limit of 100 uploads or 100 MiB per organization. This local implementation keeps staging private without requiring a separate storage service. Accounts use 15-minute access tokens and rotating refresh tokens with a seven-day absolute session lifetime. Set `COOKIE_SECURE=true` for HTTPS environments. The provided backend example sets it to false for local HTTP. Use `localhost` consistently for the web and API hosts so browser cookie rules work.
 
 Enable the PostgreSQL/Redis integration tests with `M2_INTEGRATION=1` against an isolated, migrated database. Set `M2_LIVE_WORKER=1` and start Celery with `--pool=solo` to exercise Redis broker delivery. Run the suite with the restricted `insightforge_app` database credentials and `COOKIE_SECURE=false`. The suite creates synthetic accounts, organizations and imports.
+
+## M3 business analytics
+
+Open **Business analytics** from the workspace. Admins, Analysts, and Viewers can read dashboards for their own organizations. The overview and detail reports show the published source version and timestamp. All calculations run against the selected organization's immutable active snapshots. Replacing a snapshot changes future report requests without changing older snapshot rows.
+
+The tenant-scoped endpoints are `GET /api/v1/organizations/{org_id}/metrics` and `GET /api/v1/organizations/{org_id}/analytics/{report}`. Use `overview`, `sales`, `inventory`, or `receivables` as the report. Numeric business values are serialized as decimal strings to preserve precision. Snapshot metadata is returned per domain. A domain without a published source has null metrics.
+
+| Report | Policy and filters |
+| --- | --- |
+| Sales | `start` inclusive, `end` exclusive, optional exact `branch`, `sku`, and `customer` IDs. Only completed PKR lines count. Order count uses distinct order IDs. COGS uses captured unit cost. Net revenue deducts line discounts. Returns, credits, taxes and shipping are outside the current sales input. Growth uses the preceding equal-length period. A zero prior baseline or zero orders makes the corresponding ratio unavailable. Ratios round to four decimal places. |
+| Inventory | `as_of` inclusive for on-hand stock. Movement counts also respect `start` and `end`. Filter by exact `branch` and `sku`. Include opening balances in the source as movements. The `threshold` defaults to 5 units per observed SKU and branch. Available stock is unavailable because the snapshot has no reservations. |
+| Receivables | `as_of` inclusive and optional exact `customer`. Invoice face value is counted once and only payments dated through the as-of date reduce it. Due today is current. Overdue balances use 1–30, 31–60, 61–90 and 91+ day buckets. The payments snapshot excludes credit adjustments and any invoices without a source row, including standalone unpaid invoices. These balances cover the imported invoices only. |
+
+The period defaults to the current calendar month in Asia/Karachi. The as-of date defaults to the earlier of today and the last day in the selected period. To reproduce the shipped sample, select October 1 through November 1, 2026 with October 31 as the as-of date. Expected totals include PKR 1,775 net revenue, PKR 855 gross profit, 20 units on hand, and PKR 475 outstanding and overdue.
+
+Run `python -m pytest -v` with the integration flags above to include the deterministic KPI fixtures and tenant authorization checks. The M3 fixture checks cover exact decimal arithmetic, date and ageing boundaries, source publication changes, and role-scoped reads.

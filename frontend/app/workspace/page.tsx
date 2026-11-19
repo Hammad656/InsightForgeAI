@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -255,10 +257,12 @@ export default function Workspace() {
   return <main className="mx-auto grid max-w-5xl gap-5 px-6 py-10">
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-3xl font-semibold">Workspace</h1><p>{identity?.email}</p></div>
-      {identity && <button className={input} disabled={pending} onClick={() => void run(async () => {
+      {identity && <div className="flex flex-wrap items-center gap-3">
+      {organization && <Link className={button} href="/analytics">Business analytics</Link>}
+      <button className={input} disabled={pending} onClick={() => void run(async () => {
         await api("/auth/logout", { method: "POST" });
         router.replace("/login");
-      })}>Sign out</button>}
+      })}>Sign out</button></div>}
     </header>
     {error && <p role="alert" className="text-red-700">{error}</p>}
     {identity && <section className={panel}>

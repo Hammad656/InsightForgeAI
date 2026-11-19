@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import RequestResponseEndpoint
 
-from app.api.v1 import auth, datasets, organizations
+from app.api.v1 import analytics, auth, datasets, organizations
 from app.api.v1.health import router
 from app.core.config import get_settings
 from app.core.upload_limit import UploadBodyLimit
@@ -20,8 +20,8 @@ app.add_middleware(
 )
 app.include_router(router, prefix="/api/v1")
 
-for m2_router in (auth.router, organizations.router, datasets.router):
-    app.include_router(m2_router, prefix="/api/v1")
+for application_router in (auth.router, organizations.router, datasets.router, analytics.router):
+    app.include_router(application_router, prefix="/api/v1")
 
 
 @app.exception_handler(RequestValidationError)
