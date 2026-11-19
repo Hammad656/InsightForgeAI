@@ -29,6 +29,11 @@ jobs:
       M2_INTEGRATION: "1"
       M2_LIVE_WORKER: "1"
       M4_INTEGRATION: "1"
+      M5_INTEGRATION: "1"
+      M5_LIVE_WORKER: "1"
+      REPORT_DIRECTORY: /tmp/insightforge-ci-private-reports
+      REPORT_STORAGE: local
+      AI_PROVIDER: disabled
       REPORTING_DATABASE_URL: postgresql+psycopg://insightforge_reporting:ci_reporting_only@localhost:5432/insightforge_test
     steps:
       - uses: actions/checkout@v4

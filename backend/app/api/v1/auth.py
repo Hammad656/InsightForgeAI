@@ -11,6 +11,7 @@ from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import Connection, text
 
+from app.audit import actor_context, audit
 from app.core.config import get_settings
 from app.core.tenant import set_user, transaction
 
@@ -93,6 +94,7 @@ def current_user(request: Request, db: Db) -> UUID:
     if user_id is None:
         raise HTTPException(401, "Sign in required")
     set_user(db, user_id)
+    actor_context(user_id)
     return cast(UUID, user_id)
 
 
@@ -109,6 +111,7 @@ def register(body: Credentials, db: Db, response: Response) -> dict[str, str]:
     if inserted is None:
         raise HTTPException(409, "Account could not be registered")
     issue(db, response, uid)
+    audit(db, "auth.registered", actor=uid)
     return {"email": body.email}
 
 
@@ -122,6 +125,7 @@ def login(body: Credentials, db: Db, response: Response) -> dict[str, str]:
     if row is None or not valid:
         raise HTTPException(401, "Invalid credentials")
     issue(db, response, row.id)
+    audit(db, "auth.logged_in", actor=row.id)
     return {"email": body.email}
 
 
@@ -134,14 +138,18 @@ def refresh(request: Request, db: Db, response: Response) -> None:
     if row is None:
         raise HTTPException(401, "Session expired")
     issue(db, response, row.user_id, row.id)
+    audit(db, "auth.refreshed", actor=row.user_id)
 
 
 @router.post("/logout", status_code=204, dependencies=[Depends(csrf)])
 def logout(request: Request, db: Db, response: Response) -> None:
-    db.execute(text("""
+    revoked = db.execute(text("""
         UPDATE app.sessions SET revoked_at=now()
         WHERE revoked_at IS NULL AND (refresh_hash=:refresh OR access_hash=:access)
-    """), {"refresh": digest(request.cookies.get(REFRESH, "")), "access": digest(request.cookies.get(ACCESS, ""))})
+        RETURNING user_id
+    """), {"refresh": digest(request.cookies.get(REFRESH, "")), "access": digest(request.cookies.get(ACCESS, ""))}).scalars()
+    for user_id in set(revoked):
+        audit(db, "auth.logged_out", actor=user_id)
     for key in (ACCESS, REFRESH):
         response.delete_cookie(key, path="/api/v1", secure=get_settings().cookie_secure, httponly=True)
 

@@ -14,6 +14,7 @@ from sqlalchemy import Row, text
 
 from app.api.v1.auth import Db, User
 from app.api.v1.organizations import Admin, Tenant, write
+from app.audit import audit
 from app.ingestion import FIELDS, MAX_BYTES, Domain, InvalidFile, parse
 from app.jobs.imports import import_snapshot
 
@@ -71,7 +72,8 @@ def upload(org_id: UUID, db: Db, user: User, role: Admin, file: UploadFile) -> d
         raise HTTPException(422, "Invalid filename")
     content = file.file.read(MAX_BYTES + 1)
     preview = preview_data(filename, content)
-    params = {"org": org_id, "id": uuid4(), "user": user, "filename": filename,
+    upload_id = uuid4()
+    params = {"org": org_id, "id": upload_id, "user": user, "filename": filename,
               "digest": hashlib.sha256(content).hexdigest(), "content": content}
     totals = db.execute(text("SELECT count(*),COALESCE(sum(octet_length(content)),0) FROM app.uploads "
                              "WHERE org_id=:org"), params).one()
@@ -81,6 +83,7 @@ def upload(org_id: UUID, db: Db, user: User, role: Admin, file: UploadFile) -> d
         INSERT INTO app.uploads (org_id,id,uploader,filename,digest,content)
         VALUES (:org,:id,:user,:filename,:digest,:content)
     """), params)
+    audit(db, "dataset.uploaded", org=org_id, actor=user, resource=upload_id)
     return {"id": params["id"], **preview}
 
 

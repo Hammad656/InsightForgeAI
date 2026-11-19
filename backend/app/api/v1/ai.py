@@ -13,6 +13,7 @@ from app.ai_analytics import analyze
 from app.ai_provider import ProviderUnavailable, get_provider
 from app.api.v1.auth import Db, User, limit_key
 from app.api.v1.organizations import tenant, write
+from app.audit import audit
 from app.sql_policy import QueryRejected
 
 router = APIRouter(prefix="/ai/queries")
@@ -49,6 +50,7 @@ def submit(body: Question, db: Db, user: User) -> dict[str, Any]:
         VALUES (:org,:user,:id,:question,CAST(:result AS jsonb))
     """), {"org": body.organization_id, "user": user, "id": query_id,
            "question": body.question, "result": json.dumps(response)})
+    audit(db, "ai.query_requested", org=body.organization_id, actor=user, resource=query_id)
     return response
 
 

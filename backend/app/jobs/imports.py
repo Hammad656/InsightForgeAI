@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from app.audit import audit
 from app.core.database import get_engine
 from app.core.tenant import set_org
 from app.ingestion import FIELDS, InvalidFile, parse, validate
@@ -21,7 +22,7 @@ def import_snapshot(org: str, job_id: str) -> None:
         set_org(db, params["org"])
         db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"), {"key": org})
         job = db.execute(text("""
-            SELECT j.domain,j.mapping,j.created_at,u.filename,u.content,m.role
+            SELECT j.domain,j.mapping,j.created_at,j.requested_by,u.filename,u.content,m.role
             FROM app.import_jobs j JOIN app.uploads u ON (u.org_id,u.id)=(j.org_id,j.upload_id)
             LEFT JOIN app.memberships m ON (m.org_id,m.user_id)=(j.org_id,j.requested_by)
             WHERE j.org_id=:org AND j.id=:id AND j.status='queued' FOR UPDATE OF j
@@ -62,3 +63,4 @@ def import_snapshot(org: str, job_id: str) -> None:
             UPDATE app.import_jobs SET status='published',finished_at=now(),row_count=:count
             WHERE org_id=:org AND id=:id
         """), {**info, "count": len(rows)})
+        audit(db, "dataset.published", org=params["org"], actor=job.requested_by, resource=params["id"])

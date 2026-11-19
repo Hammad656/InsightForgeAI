@@ -240,6 +240,7 @@ export default function AnalyticsPage() {
         <nav aria-label="Workspace navigation" className="flex gap-4 text-sm font-semibold text-teal-800">
           <Link href="/workspace" className="hover:underline">Workspace</Link>
           <Link href="/ask" className="hover:underline">Ask AI</Link>
+          <Link href="/reports" className="hover:underline">Reports</Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Business analytics</h1>
       </div>

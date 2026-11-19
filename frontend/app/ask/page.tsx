@@ -185,7 +185,10 @@ export default function AskPage() {
   return <main className="mx-auto grid max-w-6xl gap-5 px-4 py-8 sm:px-8">
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <Link href="/analytics" className="text-sm font-semibold text-teal-800 hover:underline">Business analytics</Link>
+        <nav className="flex gap-4 text-sm font-semibold text-teal-800" aria-label="Workspace navigation">
+          <Link href="/analytics" className="hover:underline">Business analytics</Link>
+          <Link href="/reports" className="hover:underline">Reports</Link>
+        </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">Ask AI</h1>
       </div>
       {org && <label className="grid gap-1 text-sm">Organization

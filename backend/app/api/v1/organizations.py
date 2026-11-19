@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.api.v1.auth import Credentials, Db, User, csrf, digest
+from app.audit import audit, org_context
 from app.core.tenant import set_org
 
 Role = Literal["admin", "analyst", "viewer"]
@@ -41,6 +42,7 @@ def tenant(org_id: UUID, db: Db, user: User) -> Role:
     if role is None:
         raise HTTPException(404, "Organization not found")
     set_org(db, org_id)
+    org_context(org_id)
     return cast(Role, role)
 
 
@@ -65,6 +67,7 @@ def create(body: Organization, db: Db, user: User) -> dict[str, str | UUID]:
     set_org(db, org_id)
     db.execute(text("INSERT INTO app.organizations (id,name) VALUES (:org,:name)"), {"org": org_id, "name": name})
     db.execute(text("INSERT INTO app.memberships VALUES (:org,:uid,'admin')"), {"org": org_id, "uid": user})
+    audit(db, "organization.created", org=org_id, resource=org_id)
     return {"id": org_id, "name": name, "role": "admin"}
 
 
@@ -90,6 +93,7 @@ def invite(org_id: UUID, body: Invitation, db: Db, role: Admin) -> dict[str, str
         ON CONFLICT (org_id,email) DO UPDATE SET role=excluded.role,
             token_hash=excluded.token_hash,expires_at=excluded.expires_at
     """), {"org": org_id, "email": email, "role": body.role, "hash": digest(token)})
+    audit(db, "membership.invited", org=org_id)
     return {"token": token}
 
 
@@ -105,16 +109,19 @@ def accept(org_id: UUID, body: InvitationToken, db: Db, user: User) -> None:
         raise HTTPException(404, "Invitation not found")
     db.execute(text("INSERT INTO app.memberships VALUES (:org,:uid,:role) ON CONFLICT DO NOTHING"),
                {"org": org_id, "uid": user, "role": role})
+    audit(db, "membership.accepted", org=org_id, actor=user, resource=user)
 
 
 @router.patch("/{org_id}/members/{member_id}", status_code=204, dependencies=write)
 def update_member(org_id: UUID, member_id: UUID, db: Db, role: Admin, body: MemberRole) -> None:
     change_member(org_id, member_id, db, body.role)
+    audit(db, "membership.role_changed", org=org_id, resource=member_id)
 
 
 @router.delete("/{org_id}/members/{member_id}", status_code=204, dependencies=write)
 def remove_member(org_id: UUID, member_id: UUID, db: Db, role: Admin) -> None:
     change_member(org_id, member_id, db, None)
+    audit(db, "membership.removed", org=org_id, resource=member_id)
 
 
 def change_member(org_id: UUID, member_id: UUID, db: Db, new_role: Role | None) -> None:

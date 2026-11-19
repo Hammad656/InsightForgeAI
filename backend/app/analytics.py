@@ -1,6 +1,6 @@
 """Fixed, parameterized PostgreSQL reports over immutable dataset versions."""
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import Connection, text
 
@@ -71,6 +71,14 @@ def rows(db: Connection, query: str, params: dict[str, Any]) -> list[dict[str, A
 
 
 ReadRows = Callable[[Connection, str, dict[str, Any]], list[dict[str, Any]]]
+
+
+def sales_rankings(db: Connection, params: dict[str, Any], dimension: Literal["sku", "branch"]) -> list[dict[str, Any]]:
+    column = {"sku": "sku", "branch": "branch"}[dimension]
+    return rows(db, SALES_ROWS + f"""
+        SELECT {column} AS name, {SALES_AGGREGATES} FROM selected
+        GROUP BY {column} ORDER BY net_revenue DESC, {column} LIMIT 10
+    """, params)
 
 
 def sales(db: Connection, params: dict[str, Any], details: bool, read: ReadRows = rows) -> dict[str, Any]:

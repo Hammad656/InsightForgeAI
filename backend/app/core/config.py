@@ -1,4 +1,6 @@
 from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,6 +18,10 @@ class Settings(BaseSettings):
     ai_provider: str = "disabled"
     openai_api_key: SecretStr = SecretStr("")
     openai_model: str = "gpt-4.1-mini"
+    report_storage: Literal["local", "s3"] = "local"
+    report_directory: Path = Path(".private-reports")
+    report_s3_bucket: str = ""
+    report_s3_endpoint: str | None = None
 
 
 @lru_cache

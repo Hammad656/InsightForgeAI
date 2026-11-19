@@ -3,7 +3,8 @@ WORKDIR /srv
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --timeout 120 pip==26.2 \
     && pip install --no-cache-dir --timeout 120 -r requirements.txt \
-    && useradd --create-home app
+    && useradd --create-home app \
+    && install -d -o app -g app -m 0700 /var/lib/insightforge/reports
 COPY . .
 USER app
 EXPOSE 8000

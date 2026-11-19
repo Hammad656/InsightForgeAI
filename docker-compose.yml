@@ -28,6 +28,10 @@ services:
   api:
     build: ./backend
     env_file: ./backend/.env
+    environment:
+      REPORT_DIRECTORY: /var/lib/insightforge/reports
+    volumes:
+      - report_data:/var/lib/insightforge/reports:ro
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -36,6 +40,10 @@ services:
   worker:
     build: ./backend
     env_file: ./backend/.env
+    environment:
+      REPORT_DIRECTORY: /var/lib/insightforge/reports
+    volumes:
+      - report_data:/var/lib/insightforge/reports
     command: ["celery", "-A", "app.jobs.celery_app:celery_app", "worker", "--loglevel=INFO"]
     depends_on:
       db: {condition: service_healthy}
@@ -51,3 +59,4 @@ services:
       - api
 volumes:
   postgres_data:
+  report_data:

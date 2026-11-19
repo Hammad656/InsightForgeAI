@@ -20,7 +20,7 @@ function request(path: string, init: RequestInit) {
   return fetch(`${base}/api/v1${path}`, { ...init, headers, cache: "no-store", credentials: "include" });
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function responseFor(path: string, init: RequestInit): Promise<Response> {
   let response = await request(path, init);
   if (response.status === 401 && !/^\/auth\/(login|register|logout|refresh)$/.test(path)) {
     refresh ??= request("/auth/refresh", { method: "POST" }).finally(() => { refresh = undefined; });
@@ -32,5 +32,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     const message = typeof detail === "string" ? detail : detail?.[0]?.msg;
     throw new ApiError(message ?? "Request could not be completed", response.status);
   }
+  return response;
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await responseFor(path, init);
   return response.status === 204 ? undefined as T : response.json() as Promise<T>;
+}
+
+export async function downloadPdf(path: string, token: string): Promise<Blob> {
+  const response = await responseFor(path, { method: "POST", body: JSON.stringify({ token }) });
+  if (!response.headers.get("Content-Type")?.startsWith("application/pdf")) {
+    throw new Error("The response was not a PDF.");
+  }
+  return response.blob();
 }
