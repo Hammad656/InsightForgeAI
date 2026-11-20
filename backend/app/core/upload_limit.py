@@ -10,7 +10,8 @@ class UploadBodyLimit:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["method"] != "POST" or not scope["path"].endswith("/datasets/uploads"):
+        if (scope["type"] != "http" or scope["method"] != "POST"
+                or not scope["path"].endswith(("/datasets/uploads", "/reconciliation-sources"))):
             await self.app(scope, receive, send)
             return
 

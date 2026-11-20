@@ -1,0 +1,4 @@
+invoice_id,customer_id,date,amount,balance,currency
+I-1,C-LEDGER,2026-10-01,100.00,30.00,PKR
+I-1,C-LEDGER,2026-10-01,100.00,30.00,PKR
+I-2,C-LEDGER,2026-10-02,25.00,25.00,PKR

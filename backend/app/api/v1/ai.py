@@ -14,6 +14,7 @@ from app.ai_provider import ProviderUnavailable, get_provider
 from app.api.v1.auth import Db, User, limit_key
 from app.api.v1.organizations import tenant, write
 from app.audit import audit
+from app.data_quality import quality
 from app.sql_policy import QueryRejected
 
 router = APIRouter(prefix="/ai/queries")
@@ -42,6 +43,10 @@ def submit(body: Question, db: Db, user: User) -> dict[str, Any]:
     except ProviderUnavailable:
         result = {"status": "execution_error", "answer": "AI analytics is currently unavailable."}
     tenant(body.organization_id, db, user)
+    assessment = quality(db, body.organization_id)
+    if assessment and "evidence" in result:
+        result["evidence"]["data_quality"] = assessment
+        result["evidence"]["warnings"].append(assessment["message"])
     response: dict[str, Any] = jsonable_encoder(
         {"query_id": query_id, **result}, custom_encoder={Decimal: lambda value: format(value, "f")},
     )

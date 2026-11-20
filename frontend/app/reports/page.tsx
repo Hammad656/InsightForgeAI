@@ -9,7 +9,7 @@ type Source = { version: string; published_at: string };
 type Report = {
   id: string;
   status: "queued" | "processing" | "completed" | "failed";
-  filters: { start: string; end: string; as_of: string };
+  filters: { start: string; end: string; as_of: string; data_quality?: { message: string } };
   sources: Partial<Record<"sales" | "inventory" | "payments", Source>>;
   expires_at: string | null;
   retry_available: boolean;
@@ -24,6 +24,7 @@ const failures: Record<string, string> = {
   temporary_failure: "The worker encountered a temporary failure. Retry this report from history.",
   permission_revoked: "The original requester needs report generation permission.",
   generation_failed: "Report generation failed. Retry or contact an administrator.",
+  data_quality_blocked: "Material reconciliation exceptions block publication. Review the exceptions before retrying.",
 };
 
 function nextMonth(month: string) {
@@ -157,6 +158,7 @@ function Reports({ org }: { org: Organization }) {
               </div>
             </div>
             {report.error_code && <p className="text-sm text-red-700">{failures[report.error_code] ?? "The report is temporarily unavailable."}</p>}
+            {report.filters.data_quality && <p className="text-sm text-amber-900">{report.filters.data_quality.message}</p>}
             <details className="text-sm">
               <summary className="cursor-pointer text-slate-700">Source freshness and coverage</summary>
               <ul className="mt-2 grid gap-1 text-slate-600">
@@ -196,6 +198,7 @@ export default function ReportsPage() {
         <nav className="flex gap-4 text-sm font-semibold text-teal-800" aria-label="Workspace navigation">
           <Link href="/analytics" className="hover:underline">Business analytics</Link>
           <Link href="/ask" className="hover:underline">Ask AI</Link>
+          <Link href="/reconciliation" className="hover:underline">Data quality</Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Reports</h1>
       </div>

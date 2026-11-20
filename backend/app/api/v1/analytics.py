@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from app import analytics
 from app.api.v1.auth import Db
 from app.api.v1.organizations import Tenant
+from app.data_quality import quality
 from app.semantic import catalog
 
 router = APIRouter(prefix="/organizations/{org_id}")
@@ -78,5 +79,5 @@ def report(
         }
     return JSONResponse(jsonable_encoder({
         "currency": "PKR", "timezone": "Asia/Karachi", "semantic_version": 1,
-        "filters": params, "reports": results,
+        "filters": params, "reports": results, "data_quality": quality(db, org_id),
     }, custom_encoder={Decimal: lambda value: format(value, "f")}))

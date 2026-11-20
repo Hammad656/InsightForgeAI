@@ -148,6 +148,9 @@ def render(
     add(organization, "Heading2")
     add(f"Period: {filters['start']} to {filters['end']} (end exclusive) | As of {filters['as_of']} | Asia/Karachi")
     add("Executive summary", "Heading1")
+    if assessment := filters.get("data_quality"):
+        add("Data quality: " + assessment["message"])
+        add(assessment["scope"])
     observations, mode = narrative(data)
     add(f"Narrative: {mode}")
     for observation in observations:
@@ -202,6 +205,8 @@ def render(
     flow.append(PageBreak())
     add("Evidence appendix", "Heading1")
     add(f"Report ID: {report_id} | Related Ask AI query: {query_id or 'None'}")
+    if assessment:
+        add(f"Reconciliation run: {assessment['id']} | As of {assessment['as_of']}")
     add(f"Prior period: {filters['prior_start']} to {filters['start']} (end exclusive)")
     for field, applies in (("branch", "sales and inventory"), ("sku", "sales and inventory"),
                            ("customer", "sales and receivables"), ("threshold", "inventory")):

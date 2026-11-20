@@ -18,6 +18,7 @@ from app.api.v1.analytics import Filters, resolve_period
 from app.api.v1.auth import Db, User, digest, limit_key
 from app.api.v1.organizations import Role, locked_org, tenant, write
 from app.audit import audit, correlation_id
+from app.data_quality import quality
 from app.jobs.reports import generate_report
 from app.report_models import Report, ReportDownload
 from app.report_storage import get_storage
@@ -67,6 +68,7 @@ def enqueue(org: UUID, report: UUID) -> None:
 @router.post("", status_code=202, dependencies=write)
 def submit(body: ReportRequest, db: Db, user: User) -> dict[str, Any]:
     org = body.organization_id
+    locked_org(db, org)
     role = tenant(org, db, user)
     if role == "viewer":
         raise HTTPException(403, "Analyst or administrator permission required")
@@ -98,6 +100,11 @@ def submit(body: ReportRequest, db: Db, user: User) -> dict[str, Any]:
         if not reference or not set(reference).issubset({source["version"] for source in sources.values()}):
             raise HTTPException(404, "Matching query evidence not found")
     if existing is None:
+        assessment = quality(db, org)
+        if assessment and assessment["state"] == "blocked":
+            raise HTTPException(409, assessment["message"])
+        if assessment:
+            filters["data_quality"] = jsonable_encoder(assessment)
         inserted = db.execute(insert(Report).values(
             id=uuid4(), org_id=org, created_by=user, request_key=body.request_key, template=body.template,
             filters=filters, sources=sources, query_id=body.query_id, correlation_id=correlation_id(),
@@ -108,7 +115,7 @@ def submit(body: ReportRequest, db: Db, user: User) -> dict[str, Any]:
         )).mappings().one()
         if inserted:
             audit(db, "report.requested", org=org, resource=inserted)
-    if any(existing["filters"].get(key) != value for key, value in filters.items() if key != "as_of"):
+    if any(existing["filters"].get(key) != value for key, value in filters.items() if key not in {"as_of", "data_quality"}):
         raise HTTPException(409, "This request key already belongs to a different report")
     if existing["query_id"] != body.query_id:
         raise HTTPException(409, "This request key already belongs to a different report")

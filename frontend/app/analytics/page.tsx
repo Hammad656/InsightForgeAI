@@ -23,6 +23,7 @@ type Report = {
 type Response = {
   filters: { start: string; end: string; as_of: string };
   reports: Partial<Record<Domain, Report>>;
+  data_quality?: { state: string; message: string } | null;
 };
 
 const views: Record<View, string> = {
@@ -201,6 +202,9 @@ function Dashboard({ organization }: { organization: Organization }) {
     {current?.error && <p role="alert" className="text-red-700">{current.error}</p>}
     {(!current || (!definitions && !catalogError && !current.error)) && <p role="status">Loading analytics…</p>}
     {data && definitions && <>
+      {data.data_quality && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+        {data.data_quality.message} <Link className="font-semibold underline" href="/reconciliation">Review data quality</Link>
+      </div>}
       <p className="text-sm text-slate-600">
         {view !== "receivables" && <>Period {data.filters.start} to {data.filters.end} (exclusive). </>}
         {view !== "sales" && <>As of {data.filters.as_of}. </>}Asia/Karachi
@@ -241,6 +245,7 @@ export default function AnalyticsPage() {
           <Link href="/workspace" className="hover:underline">Workspace</Link>
           <Link href="/ask" className="hover:underline">Ask AI</Link>
           <Link href="/reports" className="hover:underline">Reports</Link>
+          <Link href="/reconciliation" className="hover:underline">Data quality</Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Business analytics</h1>
       </div>

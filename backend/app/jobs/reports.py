@@ -1,15 +1,18 @@
 """Generate reports asynchronously with a bounded lease and atomic publication."""
 import hashlib
+import json
 from typing import Any
 from uuid import UUID, uuid4
 
 from celery.exceptions import SoftTimeLimitExceeded
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from app.audit import audit
 from app.core.database import get_engine
 from app.core.tenant import set_org
+from app.data_quality import quality
 from app.executive_report import collect, render
 from app.jobs.celery_app import celery_app
 from app.report_storage import MAX_ARTIFACT_BYTES, get_storage
@@ -48,6 +51,10 @@ class AccessRevoked(RuntimeError):
     pass
 
 
+class QualityBlocked(RuntimeError):
+    pass
+
+
 def generate(org: UUID, report: UUID, token: UUID, job: dict[str, Any]) -> None:
     with get_engine().begin() as db:
         set_org(db, org)
@@ -57,8 +64,14 @@ def generate(org: UUID, report: UUID, token: UUID, job: dict[str, Any]) -> None:
         """), {"org": org, "user": job["created_by"]}).scalar_one_or_none()
         if organization is None:
             raise AccessRevoked
+        assessment = quality(db, org)
+        if assessment and assessment["state"] == "blocked":
+            raise QualityBlocked
+        filters = {**job["filters"]}
+        if assessment:
+            filters["data_quality"] = jsonable_encoder(assessment)
         data = collect(db, org, job["filters"], job["sources"])
-    content = render(report, organization, job["filters"], job["sources"], data, job["query_id"])
+    content = render(report, organization, filters, job["sources"], data, job["query_id"])
     if not 0 < len(content) <= MAX_ARTIFACT_BYTES:
         raise ValueError("Report artifact size is outside policy")
     with get_engine().begin() as db:
@@ -72,13 +85,19 @@ def generate(org: UUID, report: UUID, token: UUID, job: dict[str, Any]) -> None:
         """), {"org": org, "id": report, "token": token}).scalar_one_or_none()
         if active is None:
             raise AccessRevoked
+        current = quality(db, org)
+        if current and current["state"] == "blocked":
+            raise QualityBlocked
+        if current != assessment:
+            raise OSError("Data quality changed during report generation")
         get_storage().put(org, report, content)
         db.execute(text("""
             UPDATE app.reports SET status='completed', artifact_sha256=:sha, artifact_size=:size,
-                run_token=NULL, lease_until=NULL, finished_at=clock_timestamp(),
+                run_token=NULL, lease_until=NULL, finished_at=clock_timestamp(), filters=CAST(:filters AS jsonb),
                 expires_at=clock_timestamp()+interval '30 days'
             WHERE org_id=:org AND id=:id
-        """), {"org": org, "id": report, "sha": hashlib.sha256(content).hexdigest(), "size": len(content)})
+        """), {"org": org, "id": report, "sha": hashlib.sha256(content).hexdigest(), "size": len(content),
+               "filters": json.dumps(filters)})
         audit(db, "report.completed", org=org, actor=job["created_by"], resource=report,
               correlation=job["correlation_id"])
 
@@ -115,6 +134,8 @@ def generate_report(self: Any, org_id: str, report_id: str) -> None:
         generate(org, report, token, job)
     except AccessRevoked:
         fail(org, report, token, job, "permission_revoked", False)
+    except QualityBlocked:
+        fail(org, report, token, job, "data_quality_blocked", False)
     except (OSError, OperationalError, SoftTimeLimitExceeded):
         retry = job["attempts"] < ATTEMPTS
         fail(org, report, token, job, "temporary_failure", retry)

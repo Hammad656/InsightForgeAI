@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.concurrency import run_in_threadpool
 
-from app.api.v1 import ai, analytics, auth, datasets, organizations, reports
+from app.api.v1 import ai, analytics, auth, datasets, organizations, reconciliation, reports
 from app.api.v1.health import router
 from app.audit import AuditContext, audit, audit_context
 from app.core.config import get_settings
@@ -27,7 +27,9 @@ app.add_middleware(
 )
 app.include_router(router, prefix="/api/v1")
 
-for application_router in (auth.router, organizations.router, datasets.router, analytics.router, ai.router, reports.router):
+for application_router in (
+    auth.router, organizations.router, datasets.router, analytics.router, ai.router, reports.router, reconciliation.router,
+):
     app.include_router(application_router, prefix="/api/v1")
 
 
@@ -40,7 +42,9 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 
 @app.middleware("http")
 async def protect_private_responses(request: Request, call_next: RequestResponseEndpoint) -> Response:
-    private = request.url.path.startswith(("/api/v1/auth/", "/api/v1/organizations", "/api/v1/ai/", "/api/v1/reports"))
+    private = request.url.path.startswith((
+        "/api/v1/auth/", "/api/v1/organizations", "/api/v1/ai/", "/api/v1/reports", "/api/v1/reconciliation-",
+    ))
     if not private:
         return await call_next(request)
     context = AuditContext(uuid4())

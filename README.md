@@ -116,3 +116,24 @@ The default `REPORT_STORAGE=local` backend uses `REPORT_DIRECTORY`. The API and 
 Audit records contain fixed event types, timestamps, actor and organization IDs when known, resource IDs, and correlation IDs. The runtime role can append events. Migration `0004_m5` records the static semantic catalog baseline. Future catalog revisions should record their publication in the corresponding migration.
 
 Run `python -m pytest -v` with M2 and M4 integration flags plus `M5_INTEGRATION=1`, `M5_LIVE_WORKER=1`, and a disposable `REPORT_DIRECTORY`. Use a live Celery worker for broker verification and leave `AI_PROVIDER=disabled` during acceptance.
+
+## M6A data quality and reconciliation
+
+Apply `alembic upgrade head` through `0005_m6a`. Open **Data quality** from Business analytics or Reports. Administrators can import independent source versions and approve identifier mappings. Administrators and analysts can start reconciliation and record reviews. Viewers have read access to their organization's quality workspace. Measurements in the existing analytics, Ask AI, and reports continue to use the verified M2–M5 snapshots. Reconciliation assesses separate source files and supplies warnings and publication controls.
+
+Use CSV or XLSX with the following headers. The [synthetic fixtures](backend/tests/fixtures/m6a) include four independent files with intentional discrepancies.
+
+| Source | Required columns | Optional columns |
+| --- | --- | --- |
+| Sales | `transaction_id,customer_id,product_id,branch_id,invoice_id,date,amount` | `currency,tax_amount` |
+| Inventory | `transaction_id,product_id,branch_id,date,quantity,unit` | None |
+| Invoices | `invoice_id,customer_id,date,amount` | `currency,tax_amount,balance` |
+| Payments | `payment_id,invoice_id,date,amount` | `currency,tax_amount,invoice_amount` |
+
+Use an **invoice reference namespace** on sales and payment files when their invoice identifiers belong to another system. A run requires sales, inventory, and payments. Supply a separate invoice ledger when available. When it is absent, a consistent invoice face value repeated on payment records can establish the invoice's face value. Identifiers use Unicode normalization and case folding. Dates use the Asia/Karachi business day. Timestamps need an offset, and date-only Excel cells at midnight are allowed. Inventory quantities use exact conversions between g/kg or ml/l, with `ea` for counts. Amounts accept up to six decimal places. Select gross tax basis for amounts already inclusive of tax, or net tax basis when each row supplies explicit tax. Currency mismatches are flagged and excluded from balance calculations. The engine performs no FX conversion or fuzzy matching.
+
+Records remain immutable. Upload metadata retains the filename, digest, uploader, and source revision. Runs pin source and alias versions. Issue references use the source version and the logical parsed row, with the header counted as row 1. A duplicate contributes at most once and remains visible as a material exception. The material policy holds new executive report publication while any material exception remains unresolved or reviewed. An administrator may acknowledge a limitation after review by entering a reason. A material resolution requires a newer completed run over the same source namespaces and domains, with an equal or later as-of date and without the same material rule. Both actions preserve the original exception and the append-only review trail. Acknowledgements appear in the dashboard, Ask AI evidence and newly generated PDFs. PDFs already issued are historical artifacts.
+
+The API supports `/api/v1/reconciliation-sources`, `/api/v1/reconciliation-mappings`, `/api/v1/reconciliation-runs`, and `/api/v1/reconciliation-issues/{issue_id}` with tenant-scoped history, comparisons, and review endpoints. Supply `organization_id` as the query parameter for reads and reviews, as a form field for source uploads, and in the JSON body for run submission. Use an unchanged UUID `request_key` to resubmit a queued run safely.
+
+Run `python -m pytest -v` with `M6A_INTEGRATION=1` and `M6A_LIVE_WORKER=1` alongside the earlier milestone settings to exercise the restricted role, four synthetic files, live broker, and publication gate.

@@ -1,0 +1,4 @@
+transaction_id,customer_id,product_id,branch_id,invoice_id,date,amount,currency
+TX-1,C-ERP,P-ERP,B-ERP,I-1,2026-10-01,90.00,PKR
+tx-1,C-ERP,P-ERP,B-ERP,I-1,2026-10-01,90.00,PKR
+TX-2,C-MISSING,P-MISSING,B-MISSING,I-2,2026-10-02,25.00,PKR
