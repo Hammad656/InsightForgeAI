@@ -196,6 +196,7 @@ export default function ReportsPage() {
     <header className="flex flex-wrap items-end justify-between gap-4">
       <div>
         <nav className="flex gap-4 text-sm font-semibold text-teal-800" aria-label="Workspace navigation">
+          <Link href="/schedules" className="hover:underline">Report schedules</Link>
           <Link href="/analytics" className="hover:underline">Business analytics</Link>
           <Link href="/ask" className="hover:underline">Ask AI</Link>
           <Link href="/reconciliation" className="hover:underline">Data quality</Link>

@@ -109,7 +109,8 @@ def render(
     data: dict[str, Any], query_id: UUID | None = None,
 ) -> bytes:
     stream = BytesIO()
-    doc = SimpleDocTemplate(stream, pagesize=A4, title=TITLE, author="InsightForge AI",
+    title = filters.get("report_title", TITLE)
+    doc = SimpleDocTemplate(stream, pagesize=A4, title=title, author="InsightForge AI",
                             rightMargin=42, leftMargin=42, topMargin=54, bottomMargin=47)
     styles = getSampleStyleSheet()
     for style in ("Title", "Heading1", "Heading2"):
@@ -144,9 +145,10 @@ def render(
         canvas.drawRightString(width - 42, 29, f"Page {canvas.getPageNumber()}")
         canvas.restoreState()
 
-    add(TITLE, "Title")
+    add(title, "Title")
     add(organization, "Heading2")
-    add(f"Period: {filters['start']} to {filters['end']} (end exclusive) | As of {filters['as_of']} | Asia/Karachi")
+    business_timezone = filters.get("business_timezone", "Asia/Karachi")
+    add(f"Period: {filters['start']} to {filters['end']} (end exclusive) | As of {filters['as_of']} | {business_timezone}")
     add("Executive summary", "Heading1")
     if assessment := filters.get("data_quality"):
         add("Data quality: " + assessment["message"])

@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.concurrency import run_in_threadpool
 
-from app.api.v1 import ai, analyses, analytics, auth, datasets, organizations, reconciliation, reports
+from app.api.v1 import ai, analyses, analytics, auth, dashboards, datasets, organizations, reconciliation, reports, schedules
 from app.api.v1.health import router
 from app.audit import AuditContext, audit, audit_context
 from app.core.config import get_settings
@@ -22,14 +22,14 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=get_settings().cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "X-CSRF"],
 )
 app.include_router(router, prefix="/api/v1")
 
 for application_router in (
     auth.router, organizations.router, datasets.router, analytics.router, ai.router, reports.router, reconciliation.router,
-    analyses.router,
+    analyses.router, dashboards.router, schedules.router, schedules.notices,
 ):
     app.include_router(application_router, prefix="/api/v1")
 
@@ -45,6 +45,7 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 async def protect_private_responses(request: Request, call_next: RequestResponseEndpoint) -> Response:
     private = request.url.path.startswith((
         "/api/v1/auth/", "/api/v1/organizations", "/api/v1/ai/", "/api/v1/reports", "/api/v1/reconciliation-",
+        "/api/v1/dashboards", "/api/v1/report-schedules", "/api/v1/notifications",
     ))
     if not private:
         return await call_next(request)
