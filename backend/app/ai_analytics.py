@@ -1,5 +1,7 @@
 """Compile typed intents into governed reports and attach reproducible evidence."""
 import hashlib
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from time import perf_counter
@@ -61,21 +63,53 @@ def reporting_engine() -> Engine:
 
 
 class ReportingReader:
-    def __init__(self) -> None:
+    def __init__(self, guard: Callable[[], int] | None = None, max_total_cost: float | None = None) -> None:
         self.hashes: list[str] = []
+        self.guard = guard
+        self.max_total_cost = max_total_cost
+        self.total_cost = 0.0
+
+    def check_budget(self, db: Connection) -> None:
+        if self.guard is not None:
+            milliseconds = self.guard()
+            db.execute(text("SELECT set_config('statement_timeout',:timeout,true)"),
+                       {"timeout": f"{min(2000, milliseconds)}ms"})
 
     def __call__(self, db: Connection, query: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         query = query.replace("biz.dataset_rows", "reporting.rows").strip()
         if not validate_sql(query):
             query += " LIMIT 367"
+        self.check_budget(db)
         plan = db.execute(text("EXPLAIN (FORMAT JSON) " + query), params).scalar_one()
-        if plan[0]["Plan"]["Total Cost"] > 150_000:
+        cost = plan[0]["Plan"]["Total Cost"]
+        self.total_cost += cost
+        if cost > 150_000 or (self.max_total_cost is not None and self.total_cost > self.max_total_cost):
             raise QueryRejected("Query exceeds the planning cost limit")
+        self.check_budget(db)
         result = db.execute(text(query), params).mappings().fetchmany(367)
         if len(result) > 366:
             raise QueryRejected("Query exceeds the row limit")
         self.hashes.append(hashlib.sha256(query.encode()).hexdigest())
         return [dict(row) for row in result]
+
+
+@contextmanager
+def reporting_transaction(org_id: UUID) -> Iterator[Connection]:
+    with reporting_engine().begin() as db:
+        db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+        db.execute(text("SET LOCAL statement_timeout='2000ms'"))
+        db.execute(text("SET LOCAL lock_timeout='500ms'"))
+        db.execute(text("SET LOCAL search_path=pg_catalog"))
+        db.execute(text("SET LOCAL row_security=on"))
+        role_ok = db.execute(text("""
+            SELECT current_user=session_user AND rolname='insightforge_reporting'
+                AND NOT (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication)
+            FROM pg_roles WHERE rolname=current_user
+        """)).scalar_one()
+        if not role_ok:
+            raise ProviderUnavailable("Reporting role configuration is invalid")
+        set_org(db, org_id)
+        yield db
 
 
 def report_result(
@@ -158,20 +192,7 @@ def analyze(
               "org": org_id, "domain": SOURCE_DOMAINS[domain], "result_limit": limit}
     reader = ReportingReader()
     try:
-        with reporting_engine().begin() as db:
-            db.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
-            db.execute(text("SET LOCAL statement_timeout='2000ms'"))
-            db.execute(text("SET LOCAL lock_timeout='500ms'"))
-            db.execute(text("SET LOCAL search_path=pg_catalog"))
-            db.execute(text("SET LOCAL row_security=on"))
-            role_ok = db.execute(text("""
-                SELECT current_user=session_user AND rolname='insightforge_reporting'
-                    AND NOT (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolreplication)
-                FROM pg_roles WHERE rolname=current_user
-            """)).scalar_one()
-            if not role_ok:
-                raise ProviderUnavailable("Reporting role configuration is invalid")
-            set_org(db, org_id)
+        with reporting_transaction(org_id) as db:
             sources = reader(db, SOURCE_SQL, params)
             if not sources or (dataset_ids and sources[0]["version"] not in dataset_ids):
                 return {"status": "insufficient_data", "answer": "No matching published snapshot is available.",

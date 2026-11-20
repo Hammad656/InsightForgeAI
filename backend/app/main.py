@@ -8,7 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.concurrency import run_in_threadpool
 
-from app.api.v1 import ai, analytics, auth, datasets, organizations, reconciliation, reports
+from app.api.v1 import ai, analyses, analytics, auth, datasets, organizations, reconciliation, reports
 from app.api.v1.health import router
 from app.audit import AuditContext, audit, audit_context
 from app.core.config import get_settings
@@ -29,6 +29,7 @@ app.include_router(router, prefix="/api/v1")
 
 for application_router in (
     auth.router, organizations.router, datasets.router, analytics.router, ai.router, reports.router, reconciliation.router,
+    analyses.router,
 ):
     app.include_router(application_router, prefix="/api/v1")
 
