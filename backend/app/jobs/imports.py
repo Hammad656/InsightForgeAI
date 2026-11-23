@@ -1,8 +1,9 @@
 """Idempotent asynchronous snapshot publication."""
 import json
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 from sqlalchemy.exc import OperationalError
 
 from app.audit import audit
@@ -46,21 +47,27 @@ def import_snapshot(org: str, job_id: str) -> None:
                 WHERE org_id=:org AND id=:id
             """), {**info, "errors": json.dumps(errors)})
             return
-        db.execute(text("INSERT INTO biz.dataset_versions (org_id,id,domain) VALUES (:org,:id,:domain)"), info)
-        source_key = FIELDS[job.domain][0]
-        db.execute(text("""
-            INSERT INTO biz.dataset_rows (org_id,version_id,source_key,payload)
-            VALUES (:org,:id,:key,CAST(:payload AS jsonb))
-        """), [{**info, "key": row[source_key], "payload": json.dumps(row)} for row in rows])
-        db.execute(text("""
-            UPDATE app.datasets d SET active_version=:id WHERE d.org_id=:org AND d.domain=:domain
-            AND (d.active_version IS NULL OR EXISTS (
-                SELECT 1 FROM app.import_jobs j WHERE j.org_id=d.org_id AND j.id=d.active_version
-                AND (j.created_at,j.id)<(:created,:id)
-            ))
-        """), info)
-        db.execute(text("""
-            UPDATE app.import_jobs SET status='published',finished_at=now(),row_count=:count
-            WHERE org_id=:org AND id=:id
-        """), {**info, "count": len(rows)})
-        audit(db, "dataset.published", org=params["org"], actor=job.requested_by, resource=params["id"])
+        publish_validated(db, info, rows, job.requested_by)
+
+
+def publish_validated(
+    db: Connection, info: dict[str, Any], rows: list[dict[str, str]], actor: UUID,
+) -> None:
+    db.execute(text("INSERT INTO biz.dataset_versions (org_id,id,domain) VALUES (:org,:id,:domain)"), info)
+    source_key = FIELDS[info["domain"]][0]
+    db.execute(text("""
+        INSERT INTO biz.dataset_rows (org_id,version_id,source_key,payload)
+        VALUES (:org,:id,:key,CAST(:payload AS jsonb))
+    """), [{**info, "key": row[source_key], "payload": json.dumps(row)} for row in rows])
+    db.execute(text("""
+        UPDATE app.datasets d SET active_version=:id WHERE d.org_id=:org AND d.domain=:domain
+        AND (d.active_version IS NULL OR EXISTS (
+            SELECT 1 FROM app.import_jobs j WHERE j.org_id=d.org_id AND j.id=d.active_version
+            AND (j.created_at,j.id)<(:created,:id)
+        ))
+    """), info)
+    db.execute(text("""
+        UPDATE app.import_jobs SET status='published',finished_at=now(),row_count=:count
+        WHERE org_id=:org AND id=:id
+    """), {**info, "count": len(rows)})
+    audit(db, "dataset.published", org=info["org"], actor=actor, resource=info["id"])

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
     evaluation_live_enabled: bool = False
     evaluation_cost_ceiling_per_million_tokens: Decimal | None = Field(default=None, gt=0, le=1000)
+    pg_connector_profiles: dict[str, dict[str, Any]] = {}
+    pg_connector_secret_dir: Path | None = None
+    pg_connector_allow_local_test: bool = False
     report_storage: Literal["local", "s3"] = "local"
     report_directory: Path = Path(".private-reports")
     report_s3_bucket: str = ""

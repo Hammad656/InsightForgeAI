@@ -258,6 +258,7 @@ export default function Workspace() {
     <header className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-3xl font-semibold">Workspace</h1><p>{identity?.email}</p></div>
       {identity && <div className="flex flex-wrap items-center gap-3">
+      {organization && <Link className={button} href="/connectors">Data connectors</Link>}
       {organization && <Link className={button} href="/analytics">Business analytics</Link>}
       <button className={input} disabled={pending} onClick={() => void run(async () => {
         await api("/auth/logout", { method: "POST" });
