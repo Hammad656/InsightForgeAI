@@ -114,6 +114,7 @@ export default function AskPage() {
         <nav className="flex gap-4 text-sm font-semibold text-teal-800" aria-label="Workspace navigation">
           <Link href="/analytics" className="hover:underline">Business analytics</Link>
           <Link href="/reports" className="hover:underline">Reports</Link>
+          <Link href="/evaluations" className="hover:underline">AI Quality</Link>
           <Link href="/analyses" className="hover:underline">Multi-domain analysis</Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">Ask AI</h1>

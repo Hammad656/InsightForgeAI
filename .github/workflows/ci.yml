@@ -37,6 +37,7 @@ jobs:
       M6B_LIVE_WORKER: "1"
       M6C_INTEGRATION: "1"
       M6C_LIVE_WORKER: "1"
+      M6D_INTEGRATION: "1"
       REPORT_DIRECTORY: /tmp/insightforge-ci-private-reports
       REPORT_STORAGE: local
       AI_PROVIDER: disabled
