@@ -18,6 +18,8 @@ from app.ai_analytics import (
 )
 from app.ai_provider import Provider, ProviderUnavailable
 from app.api.v1.analytics import Filters, resolve_period
+from app.forecast_data import reusable_forecast
+from app.predictive import WEEK, monday
 from app.semantic import RECEIVABLES
 from app.sql_policy import QueryRejected
 
@@ -80,7 +82,9 @@ def plan_question(provider: Provider, question: str, day: date) -> tuple[Plan, i
         "Use clarification_required for ambiguous IDs or dates, and unsupported for other requests. "
         "For sales calendar-month comparisons use previous_month with a complete month. For overdue customers "
         "use overdue_amount grouped by customer. For low-stock products use stock_on_hand, sku, low_stock_positions. "
-        "Represent requested forecasts as a forecast task with a null metric. Use depends_on only when a prior task "
+        "For a demand forecast use the forecast domain and null metric, optional exact SKU and branch, and null dates "
+        "unless an explicit horizon is requested. For a horizon, end is the Monday after the final week. "
+        "Use depends_on only when a prior task "
         "must succeed before another starts. Never emit SQL, tenant IDs, database fields or free-text instructions."
     ), {"question": question, "business_day": day.isoformat(), "metrics": [
         {key: item[key] for key in ("metric_id", "domain", "definition", "dimensions", "filters")}
@@ -127,7 +131,20 @@ def task_result(
     result: dict[str, Any]
     guard()
     if task.domain == "forecast":
-        return {"status": "unavailable", "answer": "Forecasting requires the verified M7 forecasting service.",
+        cutoff = monday(business_day)
+        horizon = (task.end - cutoff).days // 7 if task.end else None
+        if (task.metric_id not in {None, "demand_forecast"} or task.dimension or task.customer
+                or task.mode != "standard" or task.start not in {None, cutoff}
+                or task.as_of not in {None, business_day, cutoff}
+                or any(value is not None and (not value or len(value) > 120 or "\x00" in value)
+                       for value in (task.sku, task.branch))
+                or (task.end and (horizon not in {1, 2, 4} or task.end != cutoff + (horizon or 0) * WEEK))):
+            return {"status": "query_rejected", "answer": "Forecast reuse requires an exact supported demand scope and horizon."}
+        estimate = reusable_forecast(org, source["version"], business_day, task.sku, task.branch, horizon) if source else None
+        guard()
+        if estimate is not None:
+            return estimate | {"attempts": 1, "latency_ms": round((perf_counter() - started) * 1000)}
+        return {"status": "unavailable", "answer": "No completed M7 demand forecast matches the authorized snapshot and scope.",
                 "attempts": attempts, "latency_ms": 0}
     try:
         definition, params = task_parameters(task, business_day, org)

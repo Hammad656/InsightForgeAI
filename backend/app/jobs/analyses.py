@@ -155,7 +155,7 @@ def run_analysis(org_id: str, author_id: str, analysis_id: str) -> None:
 
         def execute(task: Task) -> dict[str, Any]:
             progress(params, job, task, {"status": "running", "answer": "Executing the authorized task."})
-            source = job["sources"].get(SOURCE_DOMAINS.get(task.domain))
+            source = job["sources"].get("sales" if task.domain == "forecast" else SOURCE_DOMAINS.get(task.domain))
             return task_result(task, params["org"], source, job["business_day"], lambda: guard(params))
 
         results = coordinate(plan, execute, lambda task, result: progress(params, job, task, result), lambda: guard(params))

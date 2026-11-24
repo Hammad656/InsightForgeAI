@@ -243,6 +243,7 @@ export default function AnalyticsPage() {
       <div>
         <nav aria-label="Workspace navigation" className="flex gap-4 text-sm font-semibold text-teal-800">
           <Link href="/workspace" className="hover:underline">Workspace</Link>
+          <Link href="/predictive" className="hover:underline">Predictive analytics</Link>
           <Link href="/dashboards" className="hover:underline">Custom dashboards</Link>
           <Link href="/ask" className="hover:underline">Ask AI</Link>
           <Link href="/reports" className="hover:underline">Reports</Link>
