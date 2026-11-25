@@ -83,3 +83,12 @@ Trivy 0.69.3 scanned both images with database schema 2, updated at `2026-11-25T
 CVE-2026-124851 was absent from the rebuilt image's strict scan. The other 53 rows matched the earlier local scan on CVE, binary package, installed version and reported fixed version. Debian still lists all 13 as open for Trixie. The backend remains blocked under the existing gate. [Risk register](M8_VULNERABILITY_RISK.md)
 
 The local audits under Python 3.12.16 and pip-audit 2.10.1 reported no known vulnerabilities for either Python requirements file. Both npm audits reported zero vulnerabilities.
+
+## Operational closure rescan
+
+Trivy 0.69.3 scanned the closure images using database schema 2, updated `2026-11-25T13:07:24Z`. The strict HIGH/CRITICAL failure policy remains active. No image-base experiment or exception was added for the unchanged upstream findings.
+
+| Image | Local image digest | HIGH | CRITICAL | Unique CVEs |
+|---|---|---:|---:|---:|
+| Backend | `sha256:8fe1f0bca05967da42f85e978e6e2a3adb81c585587b380bd9702e48c4269bc9` | 53 | 0 | 13 |
+| Frontend | `sha256:eebd08bb7e1b32e704e3365f237e8c61f798e4f5d9e045bb42b9a04080641c22` | 0 | 0 | 0 |

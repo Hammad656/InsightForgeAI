@@ -60,8 +60,8 @@ For application rollback, restore the previous service task definitions only aft
 | Containers | Both images built locally. Local Compose hardening preserved. |
 | Staging IaC | VPC, endpoints, internal ALB, ECS, IAM, ECR, RDS, Redis, report S3/KMS and monitoring defined. Cloud planning, bootstrap, provider connectivity and release approval remain pending. |
 | Frontend gates | Windows lint, typecheck, Vitest and Next production build passed outside the restricted runtime path. |
-| Monitoring | API and SQL latency, Celery execution and retry, job failure, provider usage, default queue depth, delivery delay and reconciliation issue counts. Nine alarms cover availability, error/retry bursts, backlog, delivery wait and RDS CPU. |
-| Remaining observability | Oldest still-enqueued item, priority queues, request/error ratios and privacy-reviewed browser telemetry. ECS Container Insights provides a managed resource-monitoring path for ECS; live resource metrics remain unverified. |
+| Monitoring | API and SQL latency, Celery execution and retries, job failure, provider usage, priority queue depth and age, and reconciliation issues. Eleven alarms cover availability, error and retry bursts, backlog, delivery wait, API error ratio and RDS CPU. |
+| Operational closure | Redis priority depths and queue-head ages, API 5xx ratio, and redacted browser telemetry verified locally. ECS and CloudWatch behavior remains unverified in AWS. |
 | Release CI | Build, dependency, secret and IaC checks defined. GitHub execution awaits separate publication approval. Existing CI supplies auth, RLS, SQL policy and connector integration coverage. |
 | Image security | Blocked on 53 HIGH Debian package findings with no fixed version reported. The critical finding and the web image findings were remediated. See the [security scan report](M8_SECURITY_SCAN.md). |
 | Staging cost | [Modeled portfolio and continuous scenarios with verified AWS rates](M8_STAGING_COST.md). |
@@ -148,4 +148,41 @@ Celery telemetry from the full integration run provides additional fixture durat
 
 The application regression gate passed. Container and local release acceptance remain blocked by the current backend image findings. GitHub release verification awaits publication and owner-configured environment protection. AWS deployment and RDS point-in-time recovery remain unverified.
 
-The final Headless Edge rerun used isolated ports 13000 and 18086 with the restored PostgreSQL database, separate Redis queue, a live Celery worker and mock AI. It passed registration and organization creation, CSV/XLSX publication, sales analytics, Ask AI evidence, PDF publication/download with independent KPI checks, and a separate 96-week forecast workflow with interval and stockout display. The initial browser attempt used the wrong built-in API origin. Rebuilding Next.js with the dedicated origin resolved it. The continuous management-page walkthrough remains open. The developer stack at ports 3000 and 8000 was left running.
+The remediation Headless Edge rerun used isolated ports 13000 and 18086 with the restored PostgreSQL database, separate Redis queue, a live Celery worker and mock AI. It passed the registration-to-PDF workflow and the separate 96-week forecast workflow. Rebuilding Next.js with the dedicated API origin resolved an initial browser configuration mistake. The closure walkthrough below expanded that coverage.
+
+## Operational closure verification
+
+The continuous Headless Edge walkthrough then passed with the same isolated loopback stack, a restored synthetic database, live Celery, and mock providers. The browser session stayed open through the following checks.
+
+| Workflow | Observed result |
+|---|---|
+| Authentication and organization management | Registered, signed out, signed back in, created a second independent tenant and invited a Viewer. |
+| RBAC and custom dashboard sharing | Created, configured and restored a dashboard, shared it through the browser, and verified Viewer visibility and a 403 on Viewer dashboard creation using a separate synthetic HTTP session. |
+| CSV/XLSX ingestion and BI | Published live CSV and XLSX imports. Verified sales, inventory stock table and receivables ageing chart. |
+| Ask AI and executive reports | Verified grounded results, evidence, PDF generation/download and independent KPI checks. |
+| Multi-domain AI | Verified three source domains against synthetic totals, displayed evidence, cancelled a run and reopened saved history. |
+| Scheduled reports | Created, paused and resumed a schedule. Advanced its due date in the disposable database, triggered the live worker, then verified PDF authorization and completion notification. |
+| AI evaluation | Ran all 162 offline cases, pinned a baseline, detected a controlled regression and verified authorized export. |
+| Forecasting, stockout risk and anomalies | Trained on 96 weeks, verified intervals and holdout coverage, and rendered stockout and seasonal anomaly review. |
+| Multi-source reconciliation | Reconciled four sources, reviewed and acknowledged issues, verified warnings in analytics and Ask AI, and verified report publication was blocked. A second tenant received 404 on issue reads and writes. |
+| PostgreSQL connector | Verified the trusted TLS profile, discovery, restricted preview, live synchronization, and disabling a connection. |
+
+Local-only synthetic screenshots were saved in the ignored test environment as `m8-continuous-sharing.png` and `m8-continuous-connector.png`. The test harness reused the local milestone fixtures and was kept out of the release commit.
+
+### Operational measurements
+
+- `/api/v1/ready` samples the four Kombu Redis priority buckets (0, 3, 6 and 9) in one transaction. It records waiting depth and the age of each FIFO head. The aggregate is the maximum timestamped head age. Legacy messages without timestamps, broker in-flight work and reordering during recovery limit the estimate. A synthetic Redis test read bucket depths of 1, 1, 0, and 1, with a maximum queue-head age of 12,007 ms.
+- The API emits a request count and 5xx flag for interactive traffic. Health probes, preflight and browser telemetry are excluded. The continuous run measured 270 such requests and zero 5xx responses. The staging alarm evaluates a 5% 5xx ratio with at least 20 requests per five-minute period.
+- Browser events accept a fixed error category or a bounded millisecond measurement. The client omits credentials and referrer, the API verifies origin and CSRF header, and event bodies are capped at 1 KiB and rate limited. One synthetic browser error was recorded without its message. No INP sample was emitted in this Headless Edge run.
+
+| Browser metric | Samples | p50 | p95 |
+|---|---:|---:|---:|
+| TTFB | 35 | 13 ms | 282 ms |
+| FCP | 35 | 104 ms | 404 ms |
+| LCP | 34 | 156 ms | 5,756 ms |
+
+These are navigation samples from a synthetic walkthrough, not an AWS performance baseline. Local resource sampling used `docker stats --no-stream` for containers and Windows process counters for the actual runtime processes. At the sampled point PostgreSQL used 88.55 MiB and 7.98% CPU, Redis used 6.95 MiB and 1.03% CPU, the API used 129.3 MiB working set and 2.22 cumulative CPU seconds, and the worker used 121.7 MiB and 1.30 cumulative CPU seconds. The smaller Python environment launcher processes were excluded.
+
+### Connector certificate setup
+
+Run `python tests/m6e_tls.py <disposable-source-container> <fresh-fixture-directory>` from the backend before provisioning test profiles. On Windows, pass `--openssl` with the installed executable path. The helper generates fresh synthetic certificates, verifies that PostgreSQL presents the expired certificate, confirms verification fails, and switches to the fresh trusted certificate. A wrong trust root also fails. The CI fixture uses a new directory on each run. Production connector TLS requirements are unchanged.

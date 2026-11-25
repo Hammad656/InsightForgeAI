@@ -1,18 +1,68 @@
 locals {
-  log_metrics = {
-    api_latency  = { group = "api", pattern = "{ $.event = \"api.request\" }", value = "$.duration_ms", unit = "Milliseconds" }
-    api_errors   = { group = "api", pattern = "{ ($.event = \"api.request\") && ($.status >= 500) }", value = "1", unit = "Count" }
-    db_latency   = { group = "api", pattern = "{ $.event = \"db.query\" }", value = "$.duration_ms", unit = "Milliseconds" }
-    job_retry    = { group = "worker", pattern = "{ ($.event = \"job.execution\") && ($.state = \"RETRY\") }", value = "1", unit = "Count" }
-    job_failure  = { group = "worker", pattern = "{ ($.event = \"job.outcome\") && ($.status = \"failed\") }", value = "1", unit = "Count" }
-    llm_tokens   = { group = "api", pattern = "{ ($.event = \"ai.provider\") && ($.tokens = *) }", value = "$.tokens", unit = "Count" }
-    queue_depth  = { group = "api", pattern = "{ $.event = \"broker.queue\" }", value = "$.default_queue_depth", unit = "Count" }
-    job_wait     = { group = "worker", pattern = "{ $.event = \"job.delivery\" }", value = "$.wait_ms", unit = "Milliseconds" }
-    job_runtime  = { group = "worker", pattern = "{ $.event = \"job.execution\" }", value = "$.duration_ms", unit = "Milliseconds" }
-    recon_issues = { group = "worker", pattern = "{ $.event = \"reconciliation.summary\" }", value = "$.issue_count", unit = "Count" }
-    task_failure = { group = "worker", pattern = "{ ($.event = \"job.execution\") && ($.state = \"FAILURE\") }", value = "1", unit = "Count" }
-  }
+  log_metrics = merge({
+    api_latency     = { group = "api", pattern = "{ $.event = \"api.request\" }", value = "$.duration_ms", unit = "Milliseconds" }
+    api_errors      = { group = "api", pattern = "{ ($.event = \"api.request\") && ($.status >= 500) }", value = "1", unit = "Count" }
+    db_latency      = { group = "api", pattern = "{ $.event = \"db.query\" }", value = "$.duration_ms", unit = "Milliseconds" }
+    job_retry       = { group = "worker", pattern = "{ ($.event = \"job.execution\") && ($.state = \"RETRY\") }", value = "1", unit = "Count" }
+    job_failure     = { group = "worker", pattern = "{ ($.event = \"job.outcome\") && ($.status = \"failed\") }", value = "1", unit = "Count" }
+    llm_tokens      = { group = "api", pattern = "{ ($.event = \"ai.provider\") && ($.tokens = *) }", value = "$.tokens", unit = "Count" }
+    queue_depth     = { group = "api", pattern = "{ $.event = \"broker.queue\" }", value = "$.default_queue_depth", unit = "Count" }
+    job_wait        = { group = "worker", pattern = "{ $.event = \"job.delivery\" }", value = "$.wait_ms", unit = "Milliseconds" }
+    job_runtime     = { group = "worker", pattern = "{ $.event = \"job.execution\" }", value = "$.duration_ms", unit = "Milliseconds" }
+    recon_issues    = { group = "worker", pattern = "{ $.event = \"reconciliation.summary\" }", value = "$.issue_count", unit = "Count" }
+    task_failure    = { group = "worker", pattern = "{ ($.event = \"job.execution\") && ($.state = \"FAILURE\") }", value = "1", unit = "Count" }
+    api_requests    = { group = "api", pattern = "{ ($.event = \"api.request\") && ($.interactive = 1) }", value = "1", unit = "Count" }
+    api_failed      = { group = "api", pattern = "{ ($.event = \"api.request\") && ($.interactive = 1) }", value = "$.server_error", unit = "Count" }
+    browser_errors  = { group = "api", pattern = "{ $.event = \"browser.error\" }", value = "1", unit = "Count" }
+    browser_lcp     = { group = "api", pattern = "{ ($.event = \"browser.performance\") && ($.metric = \"LCP\") }", value = "$.duration_ms", unit = "Milliseconds" }
+    oldest_enqueued = { group = "api", pattern = "{ ($.event = \"broker.queue\") && ($.oldest_head_ms >= 0) }", value = "$.oldest_head_ms", unit = "Milliseconds" }
+    }, {
+    for priority in [0, 3, 6, 9] : "queue_depth_${priority}" =>
+    { group = "api", pattern = "{ ($.event = \"broker.priority\") && ($.priority = ${priority}) }", value = "$.depth", unit = "Count" }
+    }, {
+    for priority in [0, 3, 6, 9] : "queue_age_${priority}" =>
+    { group = "api", pattern = "{ ($.event = \"broker.priority\") && ($.priority = ${priority}) && ($.head_age_ms >= 0) }", value = "$.head_age_ms", unit = "Milliseconds" }
+  })
   metrics_namespace = "InsightForge/${var.name}"
+}
+
+resource "aws_cloudwatch_metric_alarm" "api_error_ratio" {
+  alarm_name          = "${var.name}-api-error-ratio"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  threshold           = 5
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alarm_topic_arn]
+  metric_query {
+    id          = "ratio"
+    expression  = "IF(requests >= 20, 100 * failed / requests, 0)"
+    return_data = true
+  }
+  dynamic "metric_query" {
+    for_each = { requests = "api_requests", failed = "api_failed" }
+    content {
+      id = metric_query.key
+      metric {
+        namespace   = local.metrics_namespace
+        metric_name = aws_cloudwatch_log_metric_filter.operations[metric_query.value].metric_transformation[0].name
+        period      = 300
+        stat        = "Sum"
+      }
+    }
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "oldest_enqueued" {
+  alarm_name          = "${var.name}-oldest-enqueued"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  threshold           = 60000
+  period              = 60
+  namespace           = local.metrics_namespace
+  metric_name         = aws_cloudwatch_log_metric_filter.operations["oldest_enqueued"].metric_transformation[0].name
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [var.alarm_topic_arn]
 }
 resource "aws_cloudwatch_log_metric_filter" "operations" {
   for_each       = local.log_metrics

@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.concurrency import run_in_threadpool
 
-from app.api.v1 import ai, analyses, analytics, auth, connectors, dashboards, datasets, evaluations, forecasts, organizations, reconciliation, reports, schedules
+from app.api.v1 import ai, analyses, analytics, auth, connectors, dashboards, datasets, evaluations, forecasts, observability, organizations, reconciliation, reports, schedules
 from app.api.v1.health import router
 from app.audit import AuditContext, audit, audit_context
 from app.core.config import get_settings
@@ -32,6 +32,7 @@ app.include_router(router, prefix="/api/v1")
 for application_router in (
     auth.router, organizations.router, datasets.router, analytics.router, ai.router, reports.router, reconciliation.router,
     analyses.router, dashboards.router, schedules.router, schedules.notices, evaluations.router, connectors.router, forecasts.router,
+    observability.router,
 ):
     app.include_router(application_router, prefix="/api/v1")
 
@@ -65,7 +66,11 @@ async def protect_private_responses(request: Request, call_next: RequestResponse
         return response
     finally:
         route = getattr(request.scope.get("route"), "path", "unmatched")
-        emit("api.request", route=route, status=status, duration_ms=round((perf_counter() - started) * 1000, 2))
+        interactive = request.method != "OPTIONS" and request.url.path not in {
+            "/api/v1/health", "/api/v1/ready", "/api/v1/telemetry/browser",
+        }
+        emit("api.request", route=route, status=status, interactive=int(interactive),
+             server_error=int(status >= 500), duration_ms=round((perf_counter() - started) * 1000, 2))
         correlation.reset(trace)
         if reset is not None:
             audit_context.reset(reset)
