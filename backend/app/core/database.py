@@ -4,6 +4,7 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import get_settings
+from app.core.telemetry import observe_database
 
 
 class Base(DeclarativeBase):
@@ -15,4 +16,6 @@ def get_engine() -> Engine:
     url = get_settings().database_url
     if not url:
         raise RuntimeError("DATABASE_URL is required")
-    return create_engine(url, pool_pre_ping=True, hide_parameters=True, connect_args={"connect_timeout": 3})
+    return observe_database(create_engine(
+        url, pool_pre_ping=True, hide_parameters=True, connect_args={"connect_timeout": 3},
+    ))

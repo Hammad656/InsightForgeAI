@@ -1,3 +1,11 @@
+x-app-hardening: &app-hardening
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: ["/tmp:rw,nosuid,nodev,size=128m"]
+  restart: unless-stopped
+
 services:
   db:
     image: postgres:16-alpine
@@ -26,6 +34,9 @@ services:
       timeout: 3s
       retries: 10
   api:
+    <<: *app-hardening
+    mem_limit: 768m
+    stop_grace_period: 30s
     build: ./backend
     env_file: ./backend/.env
     environment:
@@ -38,23 +49,34 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
   worker:
+    <<: *app-hardening
+    mem_limit: 1536m
+    stop_grace_period: 5m
+    healthcheck:
+      disable: true
     build: ./backend
     env_file: ./backend/.env
     environment:
       REPORT_DIRECTORY: /var/lib/insightforge/reports
     volumes:
       - report_data:/var/lib/insightforge/reports
-    command: ["celery", "-A", "app.jobs.celery_app:celery_app", "worker", "--loglevel=INFO"]
+    command: ["celery", "-A", "app.jobs.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_healthy}
   scheduler:
+    <<: *app-hardening
+    mem_limit: 384m
+    healthcheck:
+      disable: true
     build: ./backend
     env_file: ./backend/.env
     command: ["celery", "-A", "app.jobs.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/insightforge-beat"]
     depends_on:
       redis: {condition: service_healthy}
   web:
+    <<: *app-hardening
+    mem_limit: 768m
     build:
       context: ./frontend
       args:

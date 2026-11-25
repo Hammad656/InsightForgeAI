@@ -4,6 +4,10 @@ InsightForge AI provides a Next.js workspace, a FastAPI service, PostgreSQL, Red
 
 ## Requirements
 
+For locally verified container builds, staging infrastructure, recovery results and open release gates, see [M8 release preparation](docs/M8_RELEASE_PREPARATION.md). The [AWS cost worksheet](docs/M8_STAGING_COST.md) compares monthly staging scenarios.
+
+M8 application acceptance passed locally. The backend image still has 53 HIGH findings across 13 Debian CVEs, so the release remains blocked. AWS staging deployment remains unverified. See the [security scan report](docs/M8_SECURITY_SCAN.md).
+
 Docker Desktop with Compose, or Node.js 22.13 or newer in the 22.x line, Python 3.12, PostgreSQL 16 and Redis 7 for host development. Commands below use PowerShell; on Unix use `cp`, `source .venv/bin/activate` and omit `.exe`/`.cmd` suffixes.
 
 ## Docker Compose

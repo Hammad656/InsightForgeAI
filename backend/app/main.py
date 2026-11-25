@@ -1,3 +1,4 @@
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
@@ -13,6 +14,7 @@ from app.api.v1.health import router
 from app.audit import AuditContext, audit, audit_context
 from app.core.config import get_settings
 from app.core.database import get_engine
+from app.core.telemetry import correlation, emit
 from app.core.tenant import set_org
 from app.core.upload_limit import UploadBodyLimit
 
@@ -47,19 +49,26 @@ async def protect_private_responses(request: Request, call_next: RequestResponse
         "/api/v1/auth/", "/api/v1/organizations", "/api/v1/ai/", "/api/v1/reports", "/api/v1/reconciliation-",
         "/api/v1/forecasts", "/api/v1/evaluations", "/api/v1/dashboards", "/api/v1/report-schedules", "/api/v1/notifications",
     ))
-    if not private:
-        return await call_next(request)
     context = AuditContext(uuid4())
-    reset = audit_context.set(context)
+    reset = audit_context.set(context) if private else None
+    trace = correlation.set(str(context.correlation_id))
+    started = perf_counter()
+    status = 500
     try:
         response = await call_next(request)
-        response.headers["Cache-Control"] = "private, no-store"
+        status = response.status_code
         response.headers["X-Correlation-ID"] = str(context.correlation_id)
-        if response.status_code in {401, 403, 404, 429}:
-            await run_in_threadpool(record_denial, context, response.status_code)
+        if private:
+            response.headers["Cache-Control"] = "private, no-store"
+            if status in {401, 403, 404, 429}:
+                await run_in_threadpool(record_denial, context, status)
         return response
     finally:
-        audit_context.reset(reset)
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        emit("api.request", route=route, status=status, duration_ms=round((perf_counter() - started) * 1000, 2))
+        correlation.reset(trace)
+        if reset is not None:
+            audit_context.reset(reset)
 
 
 def record_denial(context: AuditContext, status: int) -> None:

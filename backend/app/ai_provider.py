@@ -1,5 +1,6 @@
 """Server-side structured model calls. Tenant results stay inside the application."""
 import json
+from time import perf_counter
 from typing import Protocol, TypeVar
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -7,6 +8,7 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel
 
 from app.core.config import get_settings
+from app.core.telemetry import emit
 
 Output = TypeVar("Output", bound=BaseModel)
 
@@ -40,13 +42,18 @@ class OpenAIProvider:
         request = Request("https://api.openai.com/v1/chat/completions", data=body, headers={
             "Authorization": f"Bearer {self.key}", "Content-Type": "application/json",
         })
+        started = perf_counter()
         try:
             with urlopen(request, timeout=12) as response:
                 payload = json.loads(response.read(128_000))
-            return schema.model_validate_json(payload["choices"][0]["message"]["content"]), int(
-                payload["usage"]["total_tokens"]
-            )
+            result = schema.model_validate_json(payload["choices"][0]["message"]["content"])
+            tokens = int(payload["usage"]["total_tokens"])
+            ceiling = get_settings().evaluation_cost_ceiling_per_million_tokens
+            emit("ai.provider", outcome="ok", tokens=tokens, duration_ms=round((perf_counter() - started) * 1000, 2),
+                 usd_cost_upper_bound=float(tokens * ceiling / 1_000_000) if ceiling is not None else None)
+            return result, tokens
         except (URLError, OSError, ValueError, TypeError, KeyError, IndexError) as exc:
+            emit("ai.provider", outcome="failed", duration_ms=round((perf_counter() - started) * 1000, 2))
             raise ProviderUnavailable("The analysis provider is temporarily unavailable") from exc
 
 
