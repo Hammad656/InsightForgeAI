@@ -64,3 +64,22 @@ npm audit --omit=dev --json
 ```
 
 The source snapshot excluded ignored local environment files, test data and scanner reports. The source secret and Terraform scans reported zero HIGH/CRITICAL results. The IaC scanner ran without staging variables and skipped one unrelated CloudFront check that required a newer Trivy engine. The dependency audits separately reported zero findings. The repository CI enforces the image and IaC severity gates.
+
+## Targeted release remediation
+
+The original GitHub release run reported 54 HIGH and 0 CRITICAL findings in the backend, including `CVE-2026-124851` in `libzstd1` version `1.5.7+dfsg-1`. Debian identifies `1.5.7+dfsg-1+deb13u1` as fixed. The Docker build uses the supported Python 3.12 Trixie base, upgrades only the affected Debian binary package, and checks the minimum fixed version using `dpkg`. [Debian security advisory](https://security-tracker.debian.org/tracker/DSA-6657-1)
+
+The Python audits run `pip-audit==2.10.1` in fresh Python 3.12 virtual environments, with one job per requirements file. Both npm audits run independently of those jobs and each other. All four retain mandatory failure behavior. The psycopg pins and the HIGH/CRITICAL image and IaC gates are unchanged.
+
+The local backend build used `docker build --pull --no-cache -t insightforge-api-m8-zstd ./backend`. Debian's `trixie-security` repository supplied the update, and `docker run --rm --network none --entrypoint dpkg-query insightforge-api-m8-zstd -W libzstd1` reported `1.5.7+dfsg-1+deb13u1` for amd64. The frontend was rebuilt with `docker build --pull -t insightforge-web-m8-zstd ./frontend`.
+
+Trivy 0.69.3 scanned both images with database schema 2, updated at `2026-11-25T13:07:24Z` and downloaded at `2026-11-25T18:41:21Z`.
+
+| Rebuilt image | Local image digest | HIGH | CRITICAL | Unique CVEs |
+|---|---|---:|---:|---:|
+| Backend | `sha256:7019a9be56c8a91df7c7a268cb8d9708e78edd46fa443495145d7940eb338455` | 53 | 0 | 13 |
+| Frontend | `sha256:de03fbeb1683bd819d21a04bc8eb3bdd1f3a33190d5bd4dc0ecefc144510ec36` | 0 | 0 | 0 |
+
+CVE-2026-124851 was absent from the rebuilt image's strict scan. The other 53 rows matched the earlier local scan on CVE, binary package, installed version and reported fixed version. Debian still lists all 13 as open for Trixie. The backend remains blocked under the existing gate. [Risk register](M8_VULNERABILITY_RISK.md)
+
+The local audits under Python 3.12.16 and pip-audit 2.10.1 reported no known vulnerabilities for either Python requirements file. Both npm audits reported zero vulnerabilities.

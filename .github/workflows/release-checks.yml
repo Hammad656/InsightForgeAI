@@ -17,7 +17,10 @@ jobs:
         component: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t insightforge-${{ matrix.component }}:ci ./${{ matrix.component }}
+      - run: docker build --pull -t insightforge-${{ matrix.component }}:ci ./${{ matrix.component }}
+      - name: Record patched libzstd1 version
+        if: matrix.component == 'backend'
+        run: docker run --rm --network none --entrypoint dpkg-query insightforge-backend:ci -W libzstd1
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: insightforge-${{ matrix.component }}:ci
@@ -35,16 +38,44 @@ jobs:
           scanners: secret,misconfig
           severity: HIGH,CRITICAL
           exit-code: '1'
+  python-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        requirements: [requirements.txt, requirements-dev.txt]
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pipx run pip-audit --strict -r backend/requirements-dev.txt
+      - name: Audit with Python 3.12
+        env:
+          REQUIREMENTS: ${{ matrix.requirements }}
+        run: |
+          python -m venv "${RUNNER_TEMP}/python-audit"
+          audit_python="${RUNNER_TEMP}/python-audit/bin/python"
+          "$audit_python" --version
+          "$audit_python" -m pip install pip-audit==2.10.1
+          "$audit_python" -m pip_audit --version
+          "$audit_python" -m pip_audit --strict -r "backend/$REQUIREMENTS"
+  npm-audit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scope: complete
+            options: ''
+          - scope: production
+            options: --omit=dev
+    name: npm-audit (${{ matrix.scope }})
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm audit --audit-level=high
-        working-directory: frontend
-      - run: npm audit --omit=dev --audit-level=high
+      - run: npm audit --audit-level=high ${{ matrix.options }}
         working-directory: frontend
   infrastructure:
     runs-on: ubuntu-latest
