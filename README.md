@@ -1,6 +1,6 @@
 # InsightForge AI
 
-InsightForge AI provides a Next.js workspace, a FastAPI service, PostgreSQL, Redis and a Celery worker. M2 adds account sessions, organization roles and versioned CSV/XLSX snapshot imports. The overview retains the M1 foundation cards.
+InsightForge AI provides a Next.js workspace backed by FastAPI, PostgreSQL, Redis, and Celery. The workspace includes business analytics, data sources, Ask AI, executive reports, and predictive analytics. The overview displays governed KPIs from published snapshots and shows which data is unavailable.
 
 ## Requirements
 
@@ -12,17 +12,17 @@ Docker Desktop with Compose, or Node.js 22.13 or newer in the 22.x line, Python 
 
 ## Docker Compose
 
-1. Copy `.env.example` to `.env` and `backend/.env.example` to `backend/.env`. Replace both example passwords with unique local values. Use URL-safe passwords in database URLs, or percent-encode special characters. Set the same passwords in both files. For Compose set the database hosts in both backend URLs to `db` and the Redis host to `redis`.
-2. Run `docker compose up --build -d`.
-3. Apply the schema migrations: `docker compose exec api alembic upgrade head`.
-4. Open http://localhost:3000, http://localhost:8000/api/v1/health and http://localhost:8000/api/v1/ready. API docs are at http://localhost:8000/docs.
-5. Stop with `docker compose down`. The named database volume persists. PostgreSQL initialization scripts only run on a fresh volume; changing the passwords in `.env` does not rotate existing database credentials.
+1. Copy `.env.example` to `.env` and `backend/.env.example` to `backend/.env`. Use unique URL-safe passwords in the root file (letters, numbers, underscores and hyphens). Keep existing values when reusing a database volume. Compose supplies primary database and Redis URLs with the internal `db` and `redis` hostnames. Keep the backend template's loopback URLs for host development. Set the optional reporting URL to `db` if you configure a reporting login for Compose.
+2. Run `docker compose up --build -d --wait`. The one-shot `migrate` service applies Alembic migrations after PostgreSQL is healthy. The API and Celery services wait for migration success and Redis, and the web service waits for API readiness.
+3. Open http://localhost:3000. It routes to sign-in or to the workspace after checking your session. Signup is at http://localhost:3000/register. The API readiness endpoint is http://localhost:8000/api/v1/ready and API documentation is at http://localhost:8000/docs.
+4. Check startup with `docker compose ps -a` and `docker compose logs migrate`. If either data-service port is reserved, set `POSTGRES_HOST_PORT` or `REDIS_HOST_PORT` in the root file. For host tools, update the loopback URLs in `backend/.env` to match. Compose services continue to use the internal ports.
+5. Stop with `docker compose down`. The named database volume persists. PostgreSQL initializes roles only on a fresh volume. Changing passwords in `.env` does not rotate existing database credentials.
 
 The owner account initializes the database and runs migrations. The API and worker use a separate non-owner login with no superuser, database creation, role creation or RLS bypass privileges; M2 grants access to the identity and ingestion tables and enables forced row-level security on tenant-owned records. Redis and PostgreSQL are bound to loopback for local use. This Compose setup is development-only.
 
 ## Host development
 
-Start PostgreSQL and Redis with `docker compose up -d db redis` after configuring the root `.env`. Copy `backend/.env.example` to `backend/.env`, populate passwords, and retain `localhost` hosts. Then:
+Start PostgreSQL and Redis with `docker compose up -d db redis` after configuring the root `.env`. Copy `backend/.env.example` to `backend/.env` and use the database name and role passwords configured for the running PostgreSQL instance. Keep the loopback hosts and use the published host ports in the backend URLs. Then:
 
 ```powershell
 cd backend
@@ -43,6 +43,12 @@ npm.cmd run dev
 ```
 
 The browser uses `NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`); it must be a public API URL, never a secret. Set it in the root `.env` before building with Compose, or in `frontend/.env.local` for host development. Next.js embeds it at build time; rebuild the web image to change it. API CORS origins are configured with the JSON array `CORS_ORIGINS` in the backend environment.
+
+## Dataset lifecycle
+
+Organization Admins can manage uploaded files and published snapshots in **Data sources**. Upload a CSV or XLSX file, review the detected dataset type and suggested column mappings, and confirm the import. Cancel a preview to return to the file list. Delete or replace an unused file to release its staging quota. Uploads linked to any import attempt remain available as provenance. If Redis was unavailable at submission, retry the queued job. A validation failure requires a corrected file or mapping.
+
+Publishing a new version replaces the active snapshot for its dataset type. Archiving clears that active selection. Restore an archived snapshot when the type has no active version. Jobs submitted before an archive or restore can finish into version history, but cannot change the active selection. Current analytics use active versions. Archived versions remain in existing job and evidence records, and custom dashboard widgets cannot request them for new results.
 
 ## Checks
 
