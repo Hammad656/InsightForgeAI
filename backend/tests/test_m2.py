@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
 from app.api.v1.auth import digest, password_hash
+from app.api.v1.datasets import preview_data
 from app.core.config import get_settings
 from app.core.database import get_engine
 from app.core.tenant import set_org
@@ -81,6 +82,20 @@ def test_csv_fixtures_and_xlsx() -> None:
         parse("formula.xlsx", content.getvalue())
     with pytest.raises(InvalidFile):
         parse("bad.xlsx", b"not a workbook")
+
+
+def test_mapping_suggestions_require_unique_matches() -> None:
+    headers = "line_id,OrderNumber,CustomerCode,ProductCode,BranchCode,TransactionDate,quantity,SellingPrice"
+    tail = ",discount,unit_cost,status,currency"
+    values = "line,order,customer,product,branch,2025-01-01,1,10,0,3,completed,PKR"
+    result = preview_data("aliases.csv", f"{headers}{tail}\n{values}\n".encode())
+    assert result["suggested_domain"] == "sales"
+    assert result["suggestions"]["sales"]["mapping"]["order_id"] == "OrderNumber"
+    assert result["suggestions"]["sales"]["mapping"]["unit_price"] == "SellingPrice"
+    result = preview_data("ambiguous.csv", f"{headers}{tail},order_id\n{values},other\n".encode())
+    assert result["suggested_domain"] is None
+    assert result["suggestions"]["sales"]["ambiguous"] == ["order_id"]
+    assert "order_id" not in result["suggestions"]["sales"]["mapping"]
 
 
 @pytest.fixture
@@ -183,6 +198,8 @@ def test_tenant_api_worker_and_atomic_publication(integration, monkeypatch) -> N
     assert second.get(b + preview).status_code == 404
     assert second.get(a + "/members").status_code == 404
     assert second.get(a + "/datasets/imports").status_code == 404
+    assert second.get(a + "/datasets/uploads").status_code == 404
+    assert second.delete(b + f"/datasets/uploads/{upload_id}").status_code == 404
     mapping = {field: field for field in FIELDS["sales"]}
     payload = {"upload_id": upload_id, "domain": "sales", "mapping": mapping}
     assert second.post(b + "/datasets/imports", json=payload).status_code == 404
@@ -265,6 +282,8 @@ def test_tenant_api_worker_and_atomic_publication(integration, monkeypatch) -> N
     assert second.post(a + "/invitations/accept", json=token).status_code == 404
     assert second.get(a + "/datasets").status_code == 200
     assert second.get(a + preview).status_code == 403
+    assert second.get(a + "/datasets/uploads").status_code == 403
+    assert second.delete(a + f"/datasets/uploads/{upload_id}").status_code == 403
     assert upload(second, a, sales).status_code == 403
     assert second.get(a + "/members").status_code == 403
     first_id = first.get("/api/v1/auth/me").json()["id"]
@@ -273,6 +292,88 @@ def test_tenant_api_worker_and_atomic_publication(integration, monkeypatch) -> N
     assert first.patch(a + f"/members/{uid}", json={"role": "analyst"}).status_code == 204
     assert second.get(a + "/datasets").status_code == 200
     assert second.post(a + "/datasets/imports", json=payload).status_code == 403
+    assert second.post(a + f"/datasets/versions/{job}/archive").status_code == 403
     assert first.delete(a + f"/members/{uid}").status_code == 204
     assert second.get(a + "/datasets").status_code == 404
     assert second.get(b + "/datasets").status_code == 200
+
+
+def test_dataset_lifecycle_and_late_worker_delivery(integration, monkeypatch) -> None:
+    client, other = integration
+    register(client)
+    register(other)
+    path = org(client)
+    other_path = org(other)
+    tenant_id = path.rsplit("/", 1)[1]
+    staging = path + "/datasets/uploads"
+    versions = path + "/datasets/versions"
+    sales = (SAMPLES / "sales.csv").read_bytes()
+    monkeypatch.setattr(import_snapshot, "apply_async", lambda **kwargs: None)
+
+    def upload(content: bytes, endpoint: str = staging) -> str:
+        result = client.post(endpoint, files={"file": ("synthetic.csv", content)})
+        assert result.status_code == 201, result.text
+        return str(result.json()["id"])
+
+    def submit(source: str) -> str:
+        response = client.post(path + "/datasets/imports", json={
+            "upload_id": source, "domain": "sales", "mapping": {field: field for field in FIELDS["sales"]},
+        })
+        assert response.status_code == 202, response.text
+        return str(response.json()["id"])
+
+    wrong = upload(b"unexpected\n123\n")
+    assert client.get(staging + f"/{wrong}/preview").json()["suggested_domain"] is None
+    listed = client.get(staging).json()[0]
+    assert (listed["id"], listed["row_count"], listed["size_bytes"], listed["deletable"]) == (wrong, 1, 15, True)
+    assert client.delete(staging + f"/{wrong}", headers={"X-CSRF": ""}).status_code == 403
+    assert client.delete(staging + f"/{wrong}").status_code == 204
+    assert client.get(staging).json() == []
+    assert client.get(staging + f"/{wrong}/preview").status_code == 404
+
+    unused = upload(sales)
+    source = upload(sales, staging + f"?replace_upload_id={unused}")
+    assert client.get(staging + f"/{unused}/preview").status_code == 404
+    cancelled = submit(source)
+    cancel = path + f"/jobs/{cancelled}/cancel"
+    assert client.post(cancel).json()["status"] == "cancelled"
+    assert client.post(cancel).json()["status"] == "cancelled"
+    import_snapshot.run(tenant_id, cancelled)
+    assert client.get(versions).json() == []
+    assert client.delete(staging + f"/{source}").status_code == 409
+
+    published = submit(source)
+    assert published != cancelled
+    import_snapshot.run(tenant_id, published)
+    assert client.get(versions).json()[0]["status"] == "active"
+    assert client.post(path + f"/jobs/{published}/cancel").status_code == 409
+    queued = submit(upload(sales + b"\n"))
+    archive = versions + f"/{published}/archive"
+    assert other.post(other_path + f"/datasets/versions/{published}/archive").status_code == 404
+    assert client.post(archive).status_code == 204
+    assert client.post(archive).status_code == 204
+    import_snapshot.run(tenant_id, queued)
+    assert client.get(path + "/datasets").json() == []
+    assert client.get(path + "/analytics/sales").json()["reports"]["sales"]["source"] is None
+    snapshots = {item["id"]: item["status"] for item in client.get(versions).json()}
+    assert snapshots == {published: "archived", queued: "previous"}
+    restore = versions + f"/{published}/restore"
+    assert client.post(restore).status_code == 204
+    assert client.post(restore).status_code == 204
+    assert client.get(path + "/datasets").json()[0]["active_version"] == published
+    assert client.get(path + "/analytics/sales").json()["reports"]["sales"]["source"]["version"] == published
+    with get_engine().begin() as db:
+        set_org(db, UUID(tenant_id))
+        assert db.execute(text("SELECT count(*) FROM biz.dataset_rows WHERE version_id=:id"),
+                          {"id": UUID(published)}).scalar_one() == 2
+        db.execute(text("""
+            INSERT INTO app.uploads (org_id,id,uploader,filename,digest,content)
+            SELECT u.org_id,gen_random_uuid(),u.uploader,u.filename,u.digest,u.content
+            FROM app.uploads u
+            CROSS JOIN generate_series(1, 100 - (SELECT count(*) FROM app.uploads WHERE org_id=:org))
+            WHERE u.org_id=:org AND u.id=:id
+        """), {"org": UUID(tenant_id), "id": UUID(source)})
+    assert client.post(staging, files={"file": ("overflow.csv", sales)}).status_code == 413
+    unused_at_limit = next(item["id"] for item in client.get(staging).json() if item["deletable"])
+    assert client.delete(staging + f"/{unused_at_limit}").status_code == 204
+    assert upload(sales)

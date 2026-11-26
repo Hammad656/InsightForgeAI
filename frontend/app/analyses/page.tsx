@@ -1,10 +1,13 @@
 "use client";
 
+import { useWorkspace } from "@/components/app-frame";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { StatusBadge } from "@/components/ui/glass";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Result, type Answer } from "@/components/analysis-result";
-import { api, ApiError, type Identity, type Organization } from "@/lib/workspace-api";
+import { api, ApiError, type Organization } from "@/lib/workspace-api";
 
 type Planned = { id: number; domain: string; metric_id: string | null; depends_on: number[] };
 type TaskResult = Omit<Answer, "query_id"> & {
@@ -19,8 +22,8 @@ type Analysis = Entry & {
   summary?: { message: string; findings?: string[]; recommendations?: string[]; warnings?: string[] };
 };
 
-const BOX = "min-w-0 rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
-const BUTTON = "rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 disabled:opacity-50";
+const BOX = "glass-card min-w-0";
+const BUTTON = "glass-button glass-primary";
 const ROOT = "/ai/analyses";
 const suggested = [
   "Compare October 2026 net revenue with September, list overdue customers, and identify low-stock products.",
@@ -107,9 +110,9 @@ function Workspace({ org }: { org: Organization }) {
   if (!allowed) return <p className={BOX}>Multi-domain analyses require an analyst or administrator role.</p>;
   return <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
     <section className="grid min-w-0 content-start gap-4">
-      <form className={BOX + " grid gap-3"} onSubmit={start}>
+      <form className={BOX + " ai-composer grid gap-3"} onSubmit={start}>
         <label className="font-semibold" htmlFor="analysis-question">Business question</label>
-        <textarea id="analysis-question" className="rounded-md border border-slate-300 px-3 py-2"
+        <textarea id="analysis-question" className="glass-input"
           rows={3} minLength={3} maxLength={500} required value={question} onChange={(event) => setQuestion(event.target.value)}
           placeholder="Ask about sales, receivables and inventory together" />
         <p className="text-xs text-slate-600">Questions are sent to the configured AI provider. Keep confidential details out of the text.</p>
@@ -155,7 +158,7 @@ function Workspace({ org }: { org: Organization }) {
           {running && !analysis.plan && <p className="text-sm text-slate-600">Waiting for the task plan…</p>}
           {analysis.plan?.tasks && <ol className="grid gap-1 text-sm sm:grid-cols-2">
             {analysis.plan.tasks.map((task) => <li className="rounded bg-slate-50 px-3 py-2 capitalize" key={task.id}>
-              {task.id}. {task.domain} · {label(analysis.tasks[task.id]?.status ?? (running ? "queued" : "incomplete"))}
+              {task.domain} <StatusBadge status={analysis.tasks[task.id]?.status ?? (running ? "queued" : "incomplete")} />
             </li>)}
           </ol>}
           <details className="break-words text-sm">
@@ -197,35 +200,10 @@ function Workspace({ org }: { org: Organization }) {
 }
 
 export default function AnalysesPage() {
-  const [identity, setIdentity] = useState<Identity>();
-  const [selection, setSelection] = useState("");
-  const [error, setError] = useState("");
-  const router = useRouter();
-  useEffect(() => {
-    let active = true;
-    api<Identity>("/auth/me").then((data) => { if (active) setIdentity(data); }).catch((failure: Error) => {
-      if (!active) return;
-      if (failure instanceof ApiError && failure.status === 401) router.replace("/login");
-      else setError(failure.message);
-    });
-    return () => { active = false; };
-  }, [router]);
-  const org = identity?.organizations.find((item) => item.id === selection) ?? identity?.organizations[0];
-  return <main className="mx-auto grid max-w-6xl gap-5 px-4 py-8 sm:px-8">
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <Link href="/ask" className="text-sm font-semibold text-teal-800 hover:underline">Ask AI</Link>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">Multi-Domain AI Analysis</h1>
-      </div>
-      {org && <label className="grid gap-1 text-sm">Organization
-        <select value={org.id} onChange={(event) => setSelection(event.target.value)} className="rounded-md border border-slate-300 bg-white px-3 py-2">
-          {identity?.organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>}
-    </header>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {!identity && !error && <p role="status">Loading workspace…</p>}
-    {identity && !org && <p className={BOX}>Join or create an organization in <Link className="underline" href="/workspace">Workspace</Link>.</p>}
-    {org && <Workspace org={org} key={org.id} />}
+  const { identity, orgId } = useWorkspace();
+  const org = identity.organizations.find((item) => item.id === orgId);
+  return <main className="module-page ai-workspace">
+    <header className="module-header"><h1>Multi-domain analysis</h1></header>
+    {org ? <Workspace org={org} key={org.id} /> : <p className="glass-card">Create or join an organization in <Link href="/workspace/team" className="underline">Team &amp; settings</Link>.</p>}
   </main>;
 }

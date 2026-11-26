@@ -1,9 +1,11 @@
 "use client";
 
+import { useWorkspace } from "@/components/app-frame";
+
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { StatusBadge } from "@/components/ui/glass";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api, ApiError, type Identity, type Organization } from "@/lib/workspace-api";
+import { api, type Organization } from "@/lib/workspace-api";
 
 type Source = { id: string; source: string; domain: string; revision: number; filename: string; row_count: number; created_at: string };
 type Alias = { id: string; source: string; kind: string; source_key: string; canonical_key: string; revision: number };
@@ -20,8 +22,8 @@ type Issue = {
 type Review = { id: string; status: string; previous_status: string; actor_id: string; note: string; correction_alias_id: string | null; created_at: string };
 type Quality = { state: string; message: string; blocking: number; warnings: number; acknowledged: number };
 
-const section = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
-const field = "min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm";
+const section = "glass-card";
+const field = "min-w-0 glass-input";
 const button = "rounded-md bg-teal-800 px-4 py-2 text-sm font-medium text-white hover:bg-teal-900 disabled:opacity-50";
 const text = (name: string) => name.replaceAll("_", " ");
 
@@ -210,7 +212,7 @@ function QualityWorkspace({ organization, actorId }: { organization: Organizatio
     </section>
     {run && <section className={section + " grid gap-4"}>
       <h2 className="font-semibold">Run detail · {run.as_of}</h2>
-      <p role="status" className="text-sm capitalize">{run.status}</p>
+      <p role="status" className="text-sm capitalize"><StatusBadge status={run.status} /></p>
       {run.summary?.error && <p className="text-sm text-red-700">The run failed. Verify its source access and retry.</p>}
       {reviewer && (admin || run.actor_id === actorId) && ["queued", "failed"].includes(run.status) &&
         <button className={button + " justify-self-start"} disabled={busy} onClick={() => void perform(async () => {
@@ -240,7 +242,7 @@ function QualityWorkspace({ organization, actorId }: { organization: Organizatio
       </>}
       <h3 className="font-semibold">Exceptions</h3>
       {issues.map((issue) => <article key={issue.id} className="grid gap-2 rounded-lg border border-slate-200 p-3 text-sm">
-        <h4 className="font-medium capitalize">{text(issue.rule)} · {issue.severity} · {issue.status}</h4>
+        <h4 className="font-medium capitalize">{text(issue.rule)} <StatusBadge status={issue.severity} /> <StatusBadge status={issue.status} /></h4>
         <p>{issue.refs.map((ref) => ref.source + (ref.row ? " row " + ref.row : "") + " (" + ref.version_id.slice(0, 8) + ")").join(" · ")}</p>
         {(issue.expected || issue.observed) && <p>Expected {issue.expected ?? "—"} · Observed {issue.observed ?? "—"}</p>}
         {issue.reviewer && <p className="break-all">Reviewer {issue.reviewer}</p>}
@@ -271,32 +273,10 @@ function QualityWorkspace({ organization, actorId }: { organization: Organizatio
 }
 
 export default function ReconciliationPage() {
-  const router = useRouter();
-  const [identity, setIdentity] = useState<Identity>();
-  const [selected, setSelected] = useState("");
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    api<Identity>("/auth/me").then((user) => { if (active) setIdentity(user); }).catch((failure: Error) => {
-      if (!active) return;
-      if (failure instanceof ApiError && failure.status === 401) router.replace("/login");
-      else setError(failure.message);
-    });
-    return () => { active = false; };
-  }, [router]);
-  const organization = identity?.organizations.find((org) => org.id === selected) ?? identity?.organizations[0];
-  return <main className="mx-auto grid max-w-6xl gap-5 px-4 py-8 sm:px-8">
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div><Link href="/analytics" className="text-sm font-semibold text-teal-800 hover:underline">Business analytics</Link>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight">Data Quality &amp; Reconciliation</h1></div>
-      {organization && <label className="grid gap-1 text-sm">Organization<select value={organization.id} className={field}
-        onChange={(event) => setSelected(event.target.value)}>
-        {identity?.organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
-      </select></label>}
-    </header>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {!identity && !error && <p role="status">Loading workspace…</p>}
-    {identity && !organization && <p>Join or create an organization in the <Link className="underline" href="/workspace">workspace</Link>.</p>}
-    {organization && identity && <QualityWorkspace key={organization.id} organization={organization} actorId={identity.id} />}
+  const { identity, orgId } = useWorkspace();
+  const organization = identity.organizations.find((item) => item.id === orgId);
+  return <main className="module-page">
+    <header className="module-header"><h1>Data quality &amp; reconciliation</h1></header>
+    {organization ? <QualityWorkspace key={organization.id} organization={organization} actorId={identity.id} /> : <p className="glass-card">Create or join an organization in <Link href="/workspace/team" className="underline">Team &amp; settings</Link>.</p>}
   </main>;
 }

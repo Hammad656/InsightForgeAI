@@ -23,8 +23,11 @@ function request(path: string, init: RequestInit) {
 async function responseFor(path: string, init: RequestInit): Promise<Response> {
   let response = await request(path, init);
   if (response.status === 401 && !/^\/auth\/(login|register|logout|refresh)$/.test(path)) {
-    refresh ??= request("/auth/refresh", { method: "POST" }).finally(() => { refresh = undefined; });
-    if ((await refresh).ok) response = await request(path, init);
+    refresh ??= request("/auth/refresh", { method: "POST", signal: AbortSignal.timeout(8000) })
+      .finally(() => { refresh = undefined; });
+    const renewed = await refresh;
+    if (renewed.ok) response = await request(path, init);
+    else if (renewed.status !== 401) response = renewed.clone();
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null);

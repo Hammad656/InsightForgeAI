@@ -36,3 +36,21 @@ it("surfaces registration errors without attempting a session refresh", async ()
   );
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+
+it("preserves backend outages during refresh instead of treating them as expired sessions", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(new Response(null, { status: 401 }))
+    .mockResolvedValueOnce(Response.json({ detail: "Authentication temporarily unavailable" }, { status: 503 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(api("/auth/me")).rejects.toEqual(new ApiError("Authentication temporarily unavailable", 503));
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("does not retry an invalid session after refresh is rejected", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(Response.json({ detail: "Authentication required" }, { status: 401 }))
+    .mockResolvedValueOnce(Response.json({ detail: "Session expired" }, { status: 401 }));
+  vi.stubGlobal("fetch", fetchMock);
+  await expect(api("/auth/me")).rejects.toMatchObject({ status: 401 });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});

@@ -1,6 +1,8 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
+import { BadgeCheck } from "lucide-react";
+import { MetricCard, StatusBadge } from "@/components/ui/glass";
 import { button, field, OrgPage, panel, primary } from "@/components/m6c-workspace";
 import { api, type Organization } from "@/lib/workspace-api";
 
@@ -100,7 +102,7 @@ function Quality({ organization }: { organization: Organization }) {
         {!selected && <p className={panel}>Select an evaluation run to inspect its results.</p>}
         {selected && !current && !error && <p role="status">Loading results...</p>}
         {current && <div className={panel + " space-y-3"}>
-          <h2 className="text-xl font-semibold capitalize">{current.status}</h2>
+          <h2 className="text-xl font-semibold capitalize"><StatusBadge status={current.status} /></h2>
           <p className="text-sm font-semibold text-teal-800">{current.manifest.mode === "live_provider" ? "Live provider" : "Mocked offline"}</p>
           <p className="break-words text-sm">{current.model} · {current.manifest.prompt_version} · Semantic v{current.manifest.semantic_version} · {current.suite}</p>
           {current.error_code && <p role="alert">{current.error_code.replaceAll("_", " ")}</p>}
@@ -124,21 +126,19 @@ function Quality({ organization }: { organization: Organization }) {
         </div>}
         {scores && <>
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {Object.entries(labels).map(([key, label]) => <article key={key} className={panel}>
-              <h3 className="text-sm font-semibold text-slate-600">{label}</h3><p className="text-xl font-bold tabular-nums">{count(scores[key])}</p>
-            </article>)}
+            {Object.entries(labels).map(([key, label]) => <MetricCard key={key} label={label} value={count(scores[key])} icon={<BadgeCheck size={18} aria-hidden />} />)}
           </div>
           <div className={panel + " grid gap-4 md:grid-cols-2"}>
             <div><h3 className="font-semibold">Accuracy by domain</h3>
               <ul className="space-y-2">{Object.entries(scores.domains).map(([domain, score]) => <li key={domain} className="capitalize">
                 <label className="flex justify-between text-sm">{domain}<span>{count(score)}</span></label>
-                <progress className="h-2 w-full accent-teal-800" aria-label={domain} value={score.passed} max={score.total} />
+                <progress className="h-2 w-full accent-violet-400" aria-label={domain} value={score.passed} max={score.total} />
               </li>)}</ul>
             </div>
             <div><h3 className="font-semibold">Latency and cost</h3>
               {[["p50", scores.latency_p50_ms], ["p95", scores.latency_p95_ms]].map(([label, value]) => <div className="mt-2" key={label}>
                 <p className="text-sm">{label} · {value ?? "Unavailable"} ms</p>
-                {typeof value === "number" && <progress aria-label={String(label) + " latency"} className="h-2 w-full accent-teal-800"
+                {typeof value === "number" && <progress aria-label={String(label) + " latency"} className="h-2 w-full accent-violet-400"
                   value={value} max={Math.max(1, scores.latency_p95_ms ?? 1)} />}
               </div>)}
               <p className="mt-2 text-sm">Recorded tokens {scores.tokens} across {scores.token_samples} cases</p>

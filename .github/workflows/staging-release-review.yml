@@ -1,0 +1,36 @@
+name: Staging release review
+on:
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Full commit SHA for the release candidate on main
+        type: string
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  review:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Check exact revision and prerequisite workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          CANDIDATE: ${{ inputs.release_sha }}
+          DISPATCH_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE" =~ ^[0-9a-f]{40}$ && "$CANDIDATE" == "$DISPATCH_SHA" ]]
+          for workflow in ci.yml release-checks.yml; do
+            conclusion=$(gh api --method GET "repos/$REPOSITORY/actions/workflows/$workflow/runs" \
+              -f branch=main -f event=push -f head_sha="$CANDIDATE" \
+              --jq '.workflow_runs | sort_by(.run_number) | last | .conclusion // ""')
+            [[ "$conclusion" == success ]] || { echo "$workflow has not passed for the candidate"; exit 1; }
+          done
+          echo "Required workflows passed for $CANDIDATE. Staging deployment remains a separate operation."

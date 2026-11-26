@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import { type FormEvent, useEffect, useState } from "react";
+import { StatusBadge } from "@/components/ui/glass";
 import { button, field, OrgPage, panel, primary } from "@/components/m6c-workspace";
 import { api, type Organization } from "@/lib/workspace-api";
 
@@ -130,7 +131,7 @@ function Mapping({ root, connector, options, onUpdate }: {
       {!jobs && <p role="status">Loading history...</p>}
       {jobs?.length === 0 && <p>No synchronization jobs yet.</p>}
       <ul className="divide-y">{jobs?.map((job) => <li key={job.id} className="space-y-1 py-2 text-sm">
-        <p><span className="font-semibold capitalize">{job.status}</span> · {new Date(job.created_at).toLocaleString()}{job.row_count != null ? " · " + job.row_count + " rows" : ""}</p>
+        <p><StatusBadge status={job.status} /> · {new Date(job.created_at).toLocaleString()}{job.row_count != null ? " · " + job.row_count + " rows" : ""}</p>
         {job.error_code && <p>{job.error_code.replaceAll("_", " ")}</p>}
         {(job.version_id || job.recon_source_id) && <p className="break-all text-slate-600">{job.version_id ? "Dataset version " + job.version_id : "Reconciliation source " + job.recon_source_id}</p>}
         {(job.recoverable || job.status === "failed") && <button className={button} disabled={busy || !connector.enabled}

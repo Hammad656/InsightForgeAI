@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.audit import audit
 from app.core.database import get_engine
+from app.core.telemetry import emit
 from app.core.tenant import set_org
 from app.jobs.celery_app import celery_app
 from app.reconciliation import Reconciler
@@ -77,3 +78,4 @@ def process(org: UUID, run: UUID) -> None:
             WHERE org_id=:org AND id=:run
         """), {**params, "summary": json.dumps(result)})
         audit(db, "reconciliation.completed", org=org, actor=actor, resource=run, correlation=correlation)
+    emit("reconciliation.summary", issue_count=len(issues))

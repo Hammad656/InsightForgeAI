@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { ChartCard, DataTable, StatusBadge } from "@/components/ui/glass";
 import { type FormEvent, useEffect, useState } from "react";
 import { button, field, OrgPage, panel, primary } from "@/components/m6c-workspace";
 import { api, type Organization } from "@/lib/workspace-api";
@@ -27,20 +28,29 @@ const display = (value: string) => value.replaceAll("_", " ");
 const fmt = (value?: number | null) => value == null ? "Unavailable" : value.toLocaleString(undefined, {maximumFractionDigits: 3});
 
 function Chart({history, forecast}: {history: Observation[]; forecast: Point[]}) {
-  const data = [...history.slice(-16).map((row) => ({week: row.week, point: row.value, lower: row.value, upper: row.value, estimate: false})),
-    ...forecast.map((row) => ({...row, estimate: true}))];
-  const floor = Math.min(0, ...data.map((row) => row.lower));
-  const ceiling = Math.max(1, ...data.map((row) => row.upper));
-  const pos = (value: number) => 100 * (value - floor) / (ceiling - floor);
+  const observed = history.slice(-16);
+  const values = [...observed.map((row) => row.value), ...forecast.flatMap((row) => [row.lower, row.upper, row.point])];
+  const floor = Math.min(0, ...values);
+  const ceiling = Math.max(1, ...values);
+  const width = 640;
+  const height = 210;
+  const x = (index: number) => 20 + index * (width - 40) / Math.max(1, observed.length + forecast.length - 1);
+  const y = (value: number) => height - 20 - (value - floor) * (height - 40) / (ceiling - floor);
+  const historyLine = observed.map((row, index) => `${x(index)},${y(row.value)}`);
+  const pointLine = forecast.map((row, index) => `${x(observed.length + index)},${y(row.point)}`);
+  const interval = forecast.map((row, index) => `${x(observed.length + index)},${y(row.upper)}`)
+    .concat(forecast.map((row, index) => `${x(observed.length + index)},${y(row.lower)}`).reverse());
   return <figure className="space-y-3">
-    <figcaption className="text-sm text-slate-600">Historical observations in slate, estimates in teal, and prediction intervals in pale teal.</figcaption>
-    <div className="flex h-48 items-end gap-1 border-b border-l border-slate-300 px-2" aria-hidden="true">
-      {data.map((row) => <div className="relative h-full flex-1" key={row.week} title={row.week + " · " + fmt(row.point)}>
-        {row.estimate && <div className="absolute inset-x-0 rounded bg-teal-200" style={{bottom: pos(row.lower) + "%", height: (pos(row.upper) - pos(row.lower)) + "%"}} />}
-        <div className={"absolute inset-x-1 rounded " + (row.estimate ? "bg-teal-700" : "bg-slate-500")}
-          style={{bottom: Math.min(pos(0), pos(row.point)) + "%", height: Math.max(1, Math.abs(pos(row.point) - pos(0))) + "%"}} />
-      </div>)}
-    </div>
+    <figcaption className="text-sm text-slate-600">Slate shows observed demand. Cyan shows the estimate and its shaded prediction interval.</figcaption>
+    <svg viewBox={`0 0 ${width} ${height}`} className="forecast-chart" aria-hidden="true">
+      {[.25, .5, .75, 1].map((fraction) => <line key={fraction} x1={20} x2={width - 20}
+        y1={y(floor + (ceiling - floor) * fraction)} y2={y(floor + (ceiling - floor) * fraction)} stroke="#405273" />)}
+      <polygon points={interval.join(" ")} fill="#22d3ee" opacity=".2" />
+      <polyline points={historyLine.join(" ")} fill="none" stroke="#a8b6d4" strokeWidth="3" />
+      <polyline points={[...historyLine.slice(-1), ...pointLine].join(" ")} fill="none" stroke="#67e8f9" strokeWidth="3" strokeDasharray="6 4" />
+      {forecast.map((row, index) => <circle key={row.week} cx={x(observed.length + index)} cy={y(row.point)} r={3.5} fill="#a5f3fc">
+        <title>{row.week} ? {fmt(row.point)} estimated</title></circle>)}
+    </svg>
     <details><summary className="cursor-pointer text-sm font-semibold">Historical observations</summary>
       <ul className="grid gap-1 pt-2 text-sm sm:grid-cols-3">{history.map((row) => <li key={row.week}>{row.week} · {fmt(row.value)}</li>)}</ul>
     </details>
@@ -52,7 +62,7 @@ function Results({run}: {run: Run}) {
   const quality = run.evidence?.publication_quality ?? run.quality;
   return <div className="space-y-4">
     <section className={panel + " space-y-2"}>
-      <h2 className="text-xl font-semibold capitalize">{display(run.status)}</h2>
+      <h2 className="text-xl font-semibold">Forecast run <StatusBadge status={run.status} /></h2>
       {run.error_code && <p role="alert">{display(run.error_code)}</p>}
       {quality && <p className="rounded bg-amber-50 p-2 text-sm text-amber-900">{quality.message}</p>}
       {result?.required_weeks && <p>Needs {result.required_weeks} contiguous weeks. Observed {result.observed_weeks}.</p>}
@@ -62,14 +72,13 @@ function Results({run}: {run: Run}) {
         <ul className="break-all text-sm">{Object.entries(run.sources).map(([source, item]) => <li key={source}>{source} · {item.version} · {item.published_at}</li>)}</ul>
       </details>
     </section>
-    {result?.forecast && result.history && <section className={panel + " space-y-4"}>
-      <h2 className="text-xl font-semibold">Weekly forecast estimates</h2>
+    {result?.forecast && result.history && <ChartCard title="Weekly forecast estimates">
       <p className="text-sm capitalize">{display(run.config.metric)} · {run.config.sku || run.config.category || "All products"} · {run.config.branch || "All branches"}</p>
       <Chart history={result.history} forecast={result.forecast} />
-      <table className="w-full text-left text-sm"><thead><tr>{["Week of", "Lower", "Estimate", "Upper"].map((label) => <th scope="col" className="p-2" key={label}>{label}</th>)}</tr></thead>
+      <DataTable className="w-full text-left text-sm"><thead><tr>{["Week of", "Lower", "Estimate", "Upper"].map((label) => <th scope="col" className="p-2" key={label}>{label}</th>)}</tr></thead>
         <tbody>{result.forecast.map((row) => <tr className="border-t" key={row.week}><td className="p-2">{row.week}</td><td>{fmt(row.lower)}</td><td>{fmt(row.point)}</td><td>{fmt(row.upper)}</td></tr>)}</tbody>
-      </table>
-    </section>}
+      </DataTable>
+    </ChartCard>}
     {result?.backtest && <section className={panel + " space-y-3"}>
       <h2 className="text-xl font-semibold">Chronological holdout</h2>
       <p className="text-sm">{result.model && display(result.model)} · {result.model_version} · Training {result.train_start} to {result.train_end}</p>

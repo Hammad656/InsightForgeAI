@@ -156,6 +156,7 @@ def test_frozen_pdf_integrity_tenant_rbac_and_audit(workspace, monkeypatch) -> N
     assert other_request.status_code == 202
     assert [item["id"] for item in second.get(ROOT, params=scope).json()] == [other_request.json()["id"]]
 
+    assert owner.post(path + f"/datasets/versions/{versions['sales']}/archive").status_code == 204
     replacement = "\n".join(SALES.splitlines()[:2]) + "\n"
     assert publish(owner, path, "sales", replacement) != versions["sales"]
     generate_report.run(body["organization_id"], job["id"])

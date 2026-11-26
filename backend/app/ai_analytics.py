@@ -16,6 +16,7 @@ from app import analytics
 from app.ai_provider import Provider, ProviderUnavailable
 from app.api.v1.analytics import Filters, resolve_period
 from app.core.config import get_settings
+from app.core.telemetry import observe_database
 from app.core.tenant import set_org
 from app.semantic import SALES, catalog
 from app.sql_policy import QueryRejected, validate_sql
@@ -58,8 +59,10 @@ def reporting_engine() -> Engine:
     url = get_settings().reporting_database_url.get_secret_value()
     if not url:
         raise ProviderUnavailable("The reporting database is unavailable")
-    return create_engine(url, pool_size=3, max_overflow=0, pool_timeout=3, pool_pre_ping=True,
-                         hide_parameters=True, connect_args={"connect_timeout": 3})
+    return observe_database(create_engine(
+        url, pool_size=3, max_overflow=0, pool_timeout=3, pool_pre_ping=True,
+        hide_parameters=True, connect_args={"connect_timeout": 3},
+    ))
 
 
 class ReportingReader:

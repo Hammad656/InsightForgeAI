@@ -61,6 +61,7 @@ def publish_validated(
     """), [{**info, "key": row[source_key], "payload": json.dumps(row)} for row in rows])
     db.execute(text("""
         UPDATE app.datasets d SET active_version=:id WHERE d.org_id=:org AND d.domain=:domain
+        AND (d.lifecycle_changed_at IS NULL OR :created > d.lifecycle_changed_at)
         AND (d.active_version IS NULL OR EXISTS (
             SELECT 1 FROM app.import_jobs j WHERE j.org_id=d.org_id AND j.id=d.active_version
             AND (j.created_at,j.id)<(:created,:id)

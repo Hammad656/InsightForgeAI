@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Connection, insert
 
+from app.core.telemetry import emit
 from app.report_models import AuditEvent
 
 
@@ -44,3 +45,5 @@ def audit(
         id=uuid4(), org_id=org, actor_id=actor if actor is not None else (context.actor if context else None),
         event_type=event, resource_id=resource, correlation_id=correlation or correlation_id(),
     ))
+    if event in {"report.failed", "forecast.failed", "reconciliation.failed", "analysis.failed"}:
+        emit("job.outcome", operation=event, status="failed")

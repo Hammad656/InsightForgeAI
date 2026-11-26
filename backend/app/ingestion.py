@@ -33,6 +33,39 @@ class InvalidFile(ValueError):
     pass
 
 
+HEADER_ALIASES = {
+    "order_id": ("ordernumber",),
+    "customer_id": ("customercode",),
+    "sku": ("productcode",),
+    "ordered_on": ("transactiondate",),
+    "unit_price": ("sellingprice",),
+    "branch_id": ("branchcode",),
+}
+
+
+def suggest_mapping(headers: list[str], domain: Domain) -> tuple[dict[str, str], list[str], list[str]]:
+    normalized_headers: dict[str, list[str]] = {}
+    for header in headers:
+        key = re.sub(r"[^a-z0-9]", "", header.casefold())
+        normalized_headers.setdefault(key, []).append(header)
+    mapping: dict[str, str] = {}
+    ambiguous: list[str] = []
+    for field in FIELDS[domain]:
+        keys = (field.replace("_", ""), *HEADER_ALIASES.get(field, ()))
+        candidates = [header for key in keys for header in normalized_headers.get(key, ())]
+        if len(candidates) == 1:
+            mapping[field] = candidates[0]
+        elif candidates:
+            ambiguous.append(field)
+    duplicates = {header for header in mapping.values() if list(mapping.values()).count(header) > 1}
+    for field in list(mapping):
+        if mapping[field] in duplicates:
+            ambiguous.append(field)
+            del mapping[field]
+    missing = [field for field in FIELDS[domain] if field not in mapping and field not in ambiguous]
+    return mapping, missing, ambiguous
+
+
 def xlsx_rows(content: bytes) -> list[tuple[str, ...]]:
     with ZipFile(io.BytesIO(content)) as archive:
         members = archive.infolist()

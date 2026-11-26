@@ -67,6 +67,9 @@ def sources(db: Db, org: UUID, widgets: list[Widget]) -> dict[tuple[str, UUID | 
         SELECT v.domain,v.id AS version,v.published_at, d.active_version=v.id AS active
         FROM app.datasets d JOIN biz.dataset_versions v ON (d.org_id,d.domain)=(v.org_id,v.domain)
         WHERE d.org_id=:org AND (d.active_version=v.id OR v.id=ANY(CAST(:versions AS uuid[])))
+          AND NOT EXISTS (
+              SELECT 1 FROM app.archived_dataset_versions a WHERE (a.org_id,a.version_id)=(v.org_id,v.id)
+          )
     """), {"org": org, "versions": list(requested)}).mappings():
         source = dict(row)
         if row["active"]:

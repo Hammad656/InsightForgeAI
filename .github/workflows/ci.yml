@@ -66,15 +66,7 @@ jobs:
           SOURCE_CONTAINER: ${{ job.services.source.id }}
         run: |
           fixture_dir=$(mktemp -d)
-          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=connector-fixture \
-            -addext subjectAltName=IP:127.0.0.1 -keyout "$fixture_dir/server.key" -out "$fixture_dir/server.crt"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=untrusted-fixture \
-            -keyout "$fixture_dir/untrusted.key" -out "$fixture_dir/untrusted.crt"
-          docker cp "$fixture_dir/server.crt" "$SOURCE_CONTAINER:/var/lib/postgresql/data/server.crt"
-          docker cp "$fixture_dir/server.key" "$SOURCE_CONTAINER:/var/lib/postgresql/data/server.key"
-          docker exec "$SOURCE_CONTAINER" sh -c 'chown postgres:postgres "$PGDATA/server.key" "$PGDATA/server.crt" && chmod 600 "$PGDATA/server.key"'
-          docker exec "$SOURCE_CONTAINER" psql -U source_owner -d external_fixture -v ON_ERROR_STOP=1 -c 'ALTER SYSTEM SET ssl = on'
-          docker exec "$SOURCE_CONTAINER" psql -U source_owner -d external_fixture -v ON_ERROR_STOP=1 -c 'SELECT pg_reload_conf()'
+          python tests/m6e_tls.py "$SOURCE_CONTAINER" "$fixture_dir"
           export M6E_SOURCE_CA="$fixture_dir/untrusted.crt" M6E_TRUSTED_SOURCE_CA="$fixture_dir/server.crt"
           export M6E_SECRET_FIXTURE_DIR="$fixture_dir/credentials"
           echo "M6E_SOURCE_CA=$M6E_SOURCE_CA" >> "$GITHUB_ENV"

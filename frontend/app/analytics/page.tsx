@@ -1,12 +1,18 @@
 "use client";
 
+import { useWorkspace } from "@/components/app-frame";
+
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { Boxes, CircleDollarSign, PackageSearch, Receipt, ShoppingCart, TrendingUp, Wallet } from "lucide-react";
+import { ChartCard, EmptyState, LoadingState, MetricCard } from "@/components/ui/glass";
 import { type FormEvent, useEffect, useState } from "react";
-import { api, ApiError, type Identity, type Organization } from "@/lib/workspace-api";
+import { api, ApiError, type Organization } from "@/lib/workspace-api";
 
 type Domain = "sales" | "inventory" | "receivables";
 type View = "overview" | Domain;
+const overviewMetrics = ["net_revenue", "gross_profit", "order_count", "average_order_value", "outstanding", "overdue_amount", "stock_on_hand", "low_stock"];
+const metricIcons = [Wallet, TrendingUp, ShoppingCart, CircleDollarSign, Receipt, Receipt, Boxes, PackageSearch];
 type Cell = string | number | boolean | null;
 type Row = Record<string, Cell>;
 type Definition = { metric_id: string; label: string; definition: string; version: number; unit: string; domain: Domain };
@@ -29,9 +35,9 @@ type Response = {
 const views: Record<View, string> = {
   overview: "Overview", sales: "Sales", inventory: "Inventory", receivables: "Receivables",
 };
-const field = "rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900";
-const surface = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
-const primary = "rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900";
+const field = "glass-input";
+const surface = "glass-card";
+const primary = "glass-button glass-primary";
 const notes: Record<Domain, string> = {
   sales: "Completed sales in PKR. Returns, refunds, tax, and shipping are outside the imported data contract.",
   inventory: "Stock uses movement history through the as-of date. Include opening stock as a movement. Reservations are unavailable.",
@@ -60,19 +66,18 @@ function Bars({ title, rows, category, value, unit }: {
   title: string; rows: Row[]; category: string; value: string; unit?: string;
 }) {
   const max = Math.max(1, ...rows.map((row) => Math.abs(Number(row[value]))));
-  return <section className={surface}>
-    <h3 className="font-semibold">{title}</h3>
+  return <ChartCard title={title}>
     {rows.length === 0 ? <p className="mt-3 text-sm text-slate-600">No activity in this period.</p> :
       <ul className="mt-4 grid max-h-80 gap-3 overflow-y-auto">
         {rows.map((row) => <li key={String(row[category])} className="grid grid-cols-[6rem_1fr_auto] items-center gap-3 text-sm">
           <span>{String(row[category])}</span>
           <div aria-hidden="true" className="h-2 rounded bg-slate-100">
-            <div className="h-full rounded bg-teal-700" style={{ width: Math.abs(Number(row[value])) / max * 100 + "%" }} />
+            <div className="h-full rounded bg-gradient-to-r from-violet-500 to-cyan-400" style={{ width: Math.abs(Number(row[value])) / max * 100 + "%" }} />
           </div>
           <span className="tabular-nums">{display(row[value], unit)}</span>
         </li>)}
       </ul>}
-  </section>;
+  </ChartCard>;
 }
 
 type Column = [key: string, label: string, unit?: string];
@@ -133,10 +138,51 @@ function ReportSection({ domain, report, definitions }: { domain: Domain; report
   </section>;
 }
 
-function Dashboard({ organization }: { organization: Organization }) {
-  const [view, setView] = useState<View>("overview");
+function BusinessOverview({ data, definitions, details }: { data: Response; definitions: Definition[]; details?: Response[] }) {
+  const { sales, inventory, receivables } = data.reports;
+  const salesDetails = details?.find((response) => response.reports.sales?.source?.version === sales?.source?.version)?.reports.sales;
+  const stockDetails = details?.find((response) => response.reports.inventory?.source?.version === inventory?.source?.version)?.reports.inventory;
+  const leading = salesDetails?.breakdown?.slice(0, 8);
+  const growth = sales?.metrics?.sales_growth;
+  const sources = [sales?.source, inventory?.source, receivables?.source].filter((source) => source != null);
+  return <>
+    <div className="overview-metrics">
+      {overviewMetrics.map((id, index) => {
+        const definition = definitions.find((item) => item.metric_id === id);
+        const Icon = metricIcons[index];
+        const metric = definition && data.reports[definition.domain]?.metrics?.[id];
+        return <MetricCard key={id} label={definition?.label ?? id.replaceAll("_", " ")} icon={<Icon size={19} aria-hidden />}
+          value={display(metric, definition?.unit)}
+          detail={id === "net_revenue" && growth != null ? <span className={Number(growth) < 0 ? "trend-negative" : "trend-positive"}>
+            {Number(growth) > 0 ? "+" : ""}{display(growth, "percent")} vs. prior period</span> : undefined} />;
+      })}
+    </div>
+    {sources.length === 0 ? <EmptyState title="No active snapshots">
+      <p>Publish a dataset to populate your KPIs, trends, and source freshness.</p>
+      <Link href="/workspace" className={primary}>Open data sources</Link>
+    </EmptyState> : <>
+      <div className="overview-charts">
+        {sales?.trend && <Bars title="Daily net revenue" rows={sales.trend} category="day" value="net_revenue" unit="PKR" />}
+        {receivables?.ageing && <Bars title="Receivables ageing" rows={receivables.ageing} category="bucket" value="balance" unit="PKR" />}
+        {leading && <Bars title="Leading branch and product combinations" rows={leading.map((row) =>
+          ({ ...row, position: String(row.branch) + " ? " + String(row.sku) }))} category="position" value="net_revenue" unit="PKR" />}
+        {stockDetails?.positions && <Bars title="Lowest stock positions" rows={stockDetails.positions.slice(0, 8).map((row) =>
+          ({ ...row, position: String(row.branch) + " ? " + String(row.sku) }))} category="position" value="stock_on_hand" />}
+      </div>
+      <ChartCard title="Data freshness">
+        <ul className="grid gap-2 text-sm">
+          {sources.map((source) => <li key={source.version} className="flex flex-wrap justify-between gap-2" title={source.version}>
+            <span className="capitalize">{source.domain}</span><time dateTime={source.published_at}>{freshness(source.published_at)} PKT</time>
+          </li>)}
+        </ul>
+      </ChartCard>
+    </>}
+  </>;
+}
+
+function Dashboard({ organization, initialView: view }: { organization: Organization; initialView: View }) {
   const [query, setQuery] = useState("");
-  const [reportState, setReportState] = useState<{ request: string; data?: Response; error?: string }>();
+  const [reportState, setReportState] = useState<{ request: string; data?: Response; details?: Response[]; error?: string }>();
   const [definitions, setDefinitions] = useState<Definition[]>();
   const [catalogError, setCatalogError] = useState("");
   const router = useRouter();
@@ -154,14 +200,23 @@ function Dashboard({ organization }: { organization: Organization }) {
   useEffect(() => {
     const controller = new AbortController();
     api<Response>(root + "/analytics/" + request, { signal: controller.signal }).then((data) => {
-      if (!controller.signal.aborted) setReportState({ request, data });
+      if (controller.signal.aborted) return;
+      setReportState({ request, data });
+      if (view === "overview") {
+        void Promise.allSettled((["sales", "inventory"] as const).filter((domain) => data.reports[domain]?.source)
+          .map((domain) => api<Response>(root + "/analytics/" + domain + "?" + query, { signal: controller.signal })))
+          .then((results) => {
+            if (!controller.signal.aborted) setReportState({ request, data,
+              details: results.flatMap((result) => result.status === "fulfilled" ? [result.value] : []) });
+          });
+      }
     }).catch((error: Error) => {
       if (controller.signal.aborted) return;
       if (error instanceof ApiError && error.status === 401) router.replace("/login");
       setReportState({ request, error: error.message });
     });
     return () => controller.abort();
-  }, [request, root, router]);
+  }, [request, root, router, query, view]);
 
   const current = reportState?.request === request ? reportState : undefined;
   const data = current?.data;
@@ -175,10 +230,10 @@ function Dashboard({ organization }: { organization: Organization }) {
   }
 
   return <>
-    <nav aria-label="Analytics views" className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
-      {(Object.keys(views) as View[]).map((item) => <button key={item} aria-pressed={view === item}
-        className={view === item ? primary : "rounded-md px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"}
-        onClick={() => { if (view !== item) { setView(item); setQuery(""); } }}>{views[item]}</button>)}
+    <nav aria-label="Analytics views" className="flex flex-wrap gap-2">
+      {(Object.keys(views) as View[]).map((item) => <Link key={item}
+        href={item === "overview" ? "/analytics" : "/analytics/" + item}
+        aria-current={view === item ? "page" : undefined} className={view === item ? primary : "glass-button"}>{views[item]}</Link>)}
     </nav>
     <form key={view} className={surface + " flex flex-wrap items-end gap-3"} onSubmit={apply}>
       {view !== "receivables" && <>
@@ -200,7 +255,7 @@ function Dashboard({ organization }: { organization: Organization }) {
     </form>
     {catalogError && <p role="alert" className="text-red-700">{catalogError}</p>}
     {current?.error && <p role="alert" className="text-red-700">{current.error}</p>}
-    {(!current || (!definitions && !catalogError && !current.error)) && <p role="status">Loading analytics…</p>}
+    {(!current || (!definitions && !catalogError && !current.error)) && <LoadingState label="Loading analytics?" />}
     {data && definitions && <>
       {data.data_quality && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
         {data.data_quality.message} <Link className="font-semibold underline" href="/reconciliation">Review data quality</Link>
@@ -209,8 +264,9 @@ function Dashboard({ organization }: { organization: Organization }) {
         {view !== "receivables" && <>Period {data.filters.start} to {data.filters.end} (exclusive). </>}
         {view !== "sales" && <>As of {data.filters.as_of}. </>}Asia/Karachi
       </p>
-      {Object.entries(data.reports).map(([domain, report]) => <ReportSection key={domain} domain={domain as Domain}
-        report={report} definitions={definitions.filter((item) => item.domain === domain)} />)}
+      {view === "overview" ? <BusinessOverview data={data} definitions={definitions} details={current?.details} /> :
+        Object.entries(data.reports).map(([domain, report]) => <ReportSection key={domain} domain={domain as Domain}
+          report={report} definitions={definitions.filter((item) => item.domain === domain)} />)}
       <details className={surface}>
         <summary className="cursor-pointer font-semibold">Metric definitions</summary>
         <dl className="mt-3 grid gap-3 text-sm">
@@ -224,42 +280,12 @@ function Dashboard({ organization }: { organization: Organization }) {
 }
 
 export default function AnalyticsPage() {
-  const router = useRouter();
-  const [identity, setIdentity] = useState<Identity>();
-  const [selected, setSelected] = useState("");
-  const [error, setError] = useState("");
-  useEffect(() => {
-    let active = true;
-    api<Identity>("/auth/me").then((user) => { if (active) setIdentity(user); }).catch((failure: Error) => {
-      if (!active) return;
-      if (failure instanceof ApiError && failure.status === 401) router.replace("/login");
-      else setError(failure.message);
-    });
-    return () => { active = false; };
-  }, [router]);
-  const organization = identity?.organizations.find((org) => org.id === selected) ?? identity?.organizations[0];
-  return <main className="mx-auto grid max-w-7xl gap-5 px-4 py-8 sm:px-8">
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <nav aria-label="Workspace navigation" className="flex gap-4 text-sm font-semibold text-teal-800">
-          <Link href="/workspace" className="hover:underline">Workspace</Link>
-          <Link href="/predictive" className="hover:underline">Predictive analytics</Link>
-          <Link href="/dashboards" className="hover:underline">Custom dashboards</Link>
-          <Link href="/ask" className="hover:underline">Ask AI</Link>
-          <Link href="/reports" className="hover:underline">Reports</Link>
-          <Link href="/reconciliation" className="hover:underline">Data quality</Link>
-        </nav>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Business analytics</h1>
-      </div>
-      {organization && <label className="grid gap-1 text-sm">Organization
-        <select value={organization.id} onChange={(event) => setSelected(event.target.value)} className={field}>
-          {identity?.organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
-        </select>
-      </label>}
-    </header>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {!identity && !error && <p role="status">Loading workspace…</p>}
-    {identity && !organization && <p className={surface}>Create or join an organization in the <Link href="/workspace" className="underline">workspace</Link>.</p>}
-    {organization && <Dashboard organization={organization} key={organization.id} />}
+  const { identity, orgId } = useWorkspace();
+  const candidate = usePathname().split("/")[2];
+  const view = candidate === "sales" || candidate === "inventory" || candidate === "receivables" ? candidate : "overview";
+  const organization = identity.organizations.find((item) => item.id === orgId);
+  return <main className="module-page">
+    <header className="module-header"><h1>{view === "overview" ? "Business overview" : views[view]}</h1></header>
+    {organization ? <Dashboard organization={organization} initialView={view} key={organization.id + view} /> : <p className="glass-card">Create or join an organization in <Link href="/workspace/team" className="underline">Team &amp; settings</Link>.</p>}
   </main>;
 }
