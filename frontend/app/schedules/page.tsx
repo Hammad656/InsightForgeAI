@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import { type FormEvent, useEffect, useState } from "react";
+import { StatusBadge } from "@/components/ui/glass";
 import { button, field, OrgPage, panel, primary } from "@/components/m6c-workspace";
 import { api, downloadPdf, type Organization } from "@/lib/workspace-api";
 
@@ -105,7 +106,7 @@ function Schedules({ org }: { org: Organization }) {
             {!history.length && <li>No executions yet.</li>}
             {history.map((entry) => <li className="flex flex-wrap items-center gap-2 border-t pt-2" key={entry.due_at}>
               <time dateTime={entry.due_at}>{new Date(entry.due_at).toLocaleString()}</time>
-              <span className="capitalize">{human(entry.status)}{entry.error_code ? " · " + human(entry.error_code) : ""}</span>
+              <span className="capitalize"><StatusBadge status={entry.status} />{entry.error_code ? " · " + human(entry.error_code) : ""}</span>
               {entry.report_id && entry.status === "completed" && entry.expires_at && new Date(entry.expires_at) > new Date() &&
                 <button className={button} disabled={busy} onClick={() => download(entry.report_id!)}>Download PDF</button>}
               {entry.report_id && entry.status === "failed" && <button className={button} disabled={busy} onClick={() => void run(async () => {

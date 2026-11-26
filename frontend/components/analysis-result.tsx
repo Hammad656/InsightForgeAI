@@ -18,7 +18,7 @@ export type Answer = {
   usage?: { latency_ms: number; llm_tokens: number };
 };
 
-const surface = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
+const surface = "glass-card";
 const label = (value: string) => value.replaceAll("_", " ");
 
 export function Result({ answer, referenceLabel = "Query ID" }: { answer: Answer; referenceLabel?: string }) {
@@ -42,7 +42,7 @@ export function Result({ answer, referenceLabel = "Query ID" }: { answer: Answer
             className="grid w-full grid-cols-[minmax(4rem,8rem)_1fr_auto] items-center gap-3 rounded px-2 py-1 text-left text-sm hover:bg-teal-50 aria-pressed:bg-teal-100">
             <span className="truncate" title={String(row[chart.x])}>{row[chart.x]}</span>
             <span className="h-2 rounded bg-slate-100" aria-hidden="true">
-              <span className="block h-full rounded bg-teal-700" style={{ width: Math.abs(Number(row[chart.y])) / max * 100 + "%" }} />
+              <span className="block h-full rounded bg-gradient-to-r from-violet-500 to-cyan-400" style={{ width: Math.abs(Number(row[chart.y])) / max * 100 + "%" }} />
             </span>
             <span className="tabular-nums">{row[chart.y] ?? "Unavailable"}</span>
           </button>

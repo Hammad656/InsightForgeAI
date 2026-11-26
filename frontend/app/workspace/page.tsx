@@ -1,34 +1,61 @@
 "use client";
 
 import Link from "next/link";
+import { CircleCheck, CloudUpload } from "lucide-react";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { usePathname } from "next/navigation";
+import { useWorkspace } from "@/components/app-frame";
+import { GlassModal, StatusBadge } from "@/components/ui/glass";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
-import { api, ApiError, roles, type Identity, type Organization, type Role } from "@/lib/workspace-api";
+import { api, roles, type Organization, type Role } from "@/lib/workspace-api";
 
 type Member = { id: string; email: string; role: Role };
 type Domain = "sales" | "inventory" | "payments";
-type Preview = { id: string; headers: string[]; rows: string[][]; row_count: number; duplicate_rows: number; detected_types: Record<string, string>; fields: Record<Domain, string[]> };
-type ImportJob = { id: string; domain: Domain; status: "queued" | "failed" | "published"; row_count: number | null;
+type MappingSuggestion = { mapping: Record<string, string>; missing: string[]; ambiguous: string[] };
+type Preview = { id: string; headers: string[]; rows: string[][]; row_count: number; duplicate_rows: number;
+  detected_types: Record<string, string>; fields: Record<Domain, string[]>;
+  suggested_domain: Domain | null; suggestions: Record<Domain, MappingSuggestion> };
+type ImportJob = { id: string; domain: Domain; status: "queued" | "failed" | "published" | "cancelled"; row_count: number | null;
   created_at: string; errors?: { row: number; message: string }[] | null; duplicate?: boolean };
 type Dataset = { domain: Domain; active_version: string };
+type Upload = { id: string; filename: string; file_type: string; size_bytes: number; uploaded_by: string;
+  created_at: string; row_count: number | null; domain: Domain | null; job_id: string | null;
+  version_id: string | null; status: string; deletable: boolean };
+type Snapshot = { id: string; filename: string; domain: Domain; status: string; row_count: number;
+  published_at: string; can_restore: boolean };
+type Confirmation = { title: string; impact: string; action: () => Promise<void> };
 
-const input = "rounded border border-slate-300 bg-white px-3 py-2";
-const button = "rounded bg-indigo-700 px-4 py-2 text-white disabled:opacity-50";
-const panel = "grid gap-4 rounded-xl border border-slate-200 bg-white p-5";
+const input = "glass-input";
+const button = "glass-button glass-primary";
+const panel = "glass-card grid gap-4";
 const domains: Domain[] = ["sales", "inventory", "payments"];
+
+async function datasetHistory(path: string) {
+  return Promise.all([api<Upload[]>(`${path}/datasets/uploads`),
+    api<Snapshot[]>(`${path}/datasets/versions`), api<ImportJob[]>(`${path}/datasets/imports`)]);
+}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Request failed";
 }
 
-function AdminTools({ organization }: { organization: Organization }) {
+function AdminTools({ organization, teamOnly }: { organization: Organization; teamOnly: boolean }) {
   const path = `/organizations/${organization.id}`;
   const [members, setMembers] = useState<Member[]>([]);
   const [history, setHistory] = useState<ImportJob[]>([]);
   const [preview, setPreview] = useState<Preview>();
-  const [domain, setDomain] = useState<Domain>("sales");
+  const [domain, setDomain] = useState<Domain | "">("");
+  const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [file, setFile] = useState<File>();
+  const [replacement, setReplacement] = useState<Upload>();
+  const [replacementDomain, setReplacementDomain] = useState<Domain>();
+  const [uploads, setUploads] = useState<Upload[]>([]);
+  const [versions, setVersions] = useState<Snapshot[]>([]);
+  const [confirmation, setConfirmation] = useState<Confirmation>();
+  const [toast, setToast] = useState("");
+  const uploadPanel = useRef<HTMLElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [job, setJob] = useState<ImportJob>();
   const [invitation, setInvitation] = useState("");
   const [error, setError] = useState("");
@@ -38,10 +65,10 @@ function AdminTools({ organization }: { organization: Organization }) {
     let active = true;
     async function load() {
       try {
-        const [team, jobs] = await Promise.all([
-          api<Member[]>(`${path}/members`), api<ImportJob[]>(`${path}/datasets/imports`),
+        const [team, [files, snapshots, jobs]] = await Promise.all([
+          api<Member[]>(`${path}/members`), datasetHistory(path),
         ]);
-        if (active) { setMembers(team); setHistory(jobs); }
+        if (active) { setMembers(team); setHistory(jobs); setUploads(files); setVersions(snapshots); }
       } catch (failure) { if (active) setError(errorMessage(failure)); }
     }
     void load();
@@ -56,14 +83,36 @@ function AdminTools({ organization }: { organization: Organization }) {
     const timer = window.setInterval(async () => {
       try {
         const result = await api<ImportJob>(`${path}/jobs/${jobId}`);
+        const updated = result.status !== "queued" ? await datasetHistory(path) : undefined;
         if (active) {
           setJob(result);
-          setHistory((previous) => previous.map((item) => item.id === result.id ? result : item));
+          if (updated) { setUploads(updated[0]); setVersions(updated[1]); setHistory(updated[2]); }
         }
       } catch (failure) { if (active) setError(errorMessage(failure)); }
     }, 1500);
     return () => { active = false; window.clearInterval(timer); };
   }, [jobId, jobStatus, path]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  async function refresh() {
+    const [files, snapshots, jobs] = await datasetHistory(path);
+    setUploads(files);
+    setVersions(snapshots);
+    setHistory(jobs);
+  }
+
+  function openPreview(result: Preview, target?: Domain) {
+    const selected = target ?? result.suggested_domain ?? "";
+    setPreview(result);
+    setDomain(selected);
+    setMapping(selected ? result.suggestions[selected].mapping : {});
+    setJob(undefined);
+  }
 
   async function run(action: () => Promise<void>) {
     setError("");
@@ -86,30 +135,49 @@ function AdminTools({ organization }: { organization: Organization }) {
 
   function upload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const body = new FormData(event.currentTarget);
-    void run(async () => {
-      setPreview(undefined);
-      setPreview(await api<Preview>(`${path}/datasets/uploads`, { method: "POST", body }));
-    });
+    if (!file) return;
+    const body = new FormData();
+    body.set("file", file);
+    const suffix = replacement ? `?replace_upload_id=${replacement.id}` : "";
+    const action = async () => {
+      openPreview(await api<Preview>(`${path}/datasets/uploads${suffix}`, { method: "POST", body }), replacementDomain);
+      setFile(undefined);
+      if (fileInput.current) fileInput.current.value = "";
+      setReplacement(undefined);
+      setToast("File uploaded and ready to review.");
+      await refresh();
+    };
+    if (replacement) setConfirmation({ title: `Replace ${replacement.filename}?`,
+      impact: "The unused file will be removed when the new file passes preview validation. Published snapshots stay available.",
+      action });
+    else void run(action);
   }
+
+  const fields = preview && domain ? preview.fields[domain] : [];
+  const selectedColumns = fields.map((field) => mapping[field]).filter(Boolean);
+  const duplicateColumns = selectedColumns.length !== new Set(selectedColumns).size;
+  const incomplete = selectedColumns.length !== fields.length || duplicateColumns;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!preview) return;
-    const mapping = Object.fromEntries(new FormData(event.currentTarget));
+    if (!preview || !domain || incomplete) return;
     void run(async () => {
       const result = await api<ImportJob>(`${path}/datasets/imports`, {
         method: "POST", body: JSON.stringify({ upload_id: preview.id, domain, mapping }),
       });
       setJob(result);
-      setHistory((previous) => [result, ...previous.filter((item) => item.id !== result.id)]);
+      setToast(result.duplicate ? "This import already has a history record." : "Import submitted.");
+      setPreview(undefined);
+      setReplacementDomain(undefined);
+      await refresh();
     });
   }
 
   return (
     <div className="grid gap-5">
+      {toast && <div className="workspace-toast flex items-center gap-2" role="status"><CircleCheck size={20} aria-hidden />{toast}</div>}
       {error && <p role="alert" className="text-red-700">{error}</p>}
-      <section className={panel}>
+      {teamOnly ? <section className={panel}>
         <h2 className="text-xl font-semibold">Team and roles</h2>
         <form onSubmit={invite} className="flex flex-wrap items-end gap-3">
           <label className="grid gap-1">Invite by email<input className={input} name="email" type="email" required /></label>
@@ -141,20 +209,43 @@ function AdminTools({ organization }: { organization: Organization }) {
               })}>Remove</button>
           </li>)}
         </ul>
-      </section>
-      <section className={panel}>
+      </section> : <>
+      <section className={panel} ref={uploadPanel}>
         <h2 className="text-xl font-semibold">Upload a dataset</h2>
+        <ol aria-label="Upload progress" className="flex flex-wrap gap-3 text-sm text-slate-600">
+          {["Select file", "Preview", "Review mapping", "Validate and import", "Import status"].map((step, index) =>
+            <li key={step} aria-current={index === (job ? 4 : preview ? (incomplete ? 2 : 3) : file ? 1 : 0) ? "step" : undefined}>
+              {index + 1}. {step}</li>)}
+        </ol>
         <div className="flex flex-wrap gap-4 text-sm text-indigo-700">
           {domains.map((value) => <a key={value} href={`/samples/${value}.csv`} download>Download {value} sample</a>)}
         </div>
-        <form className="flex flex-wrap items-end gap-3" onSubmit={upload}>
-          <label className="grid gap-1">CSV or XLSX file, up to 5 MiB
-            <input className={input} type="file" name="file" accept=".csv,.xlsx" required />
+        <form className="upload-drop" onSubmit={upload}
+          onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
+            event.preventDefault();
+            if (!pending) setFile(event.dataTransfer.files[0]);
+          }}>
+          <span className="metric-icon"><CloudUpload size={20} aria-hidden /></span>
+          <label className="grid min-w-0 gap-1">Drop a CSV/XLSX file or choose one (up to 5 MiB)
+            <input ref={fileInput} className={input} type="file" name="file" accept=".csv,.xlsx"
+              onChange={(event) => setFile(event.target.files?.[0])} />
           </label>
-          <button className={button} disabled={pending}>Upload and preview</button>
+          <button className={button} disabled={pending || !file}>{pending ? "Working…" : "Upload and preview"}</button>
+          {file && <span className="break-all text-sm">{file.name}</span>}
+          {(replacement || replacementDomain) && <p className="w-full">
+            Replacing {replacement?.filename ?? `the ${replacementDomain} snapshot`}
+            <button className="ml-2 underline" type="button" onClick={() => {
+              setReplacement(undefined); setReplacementDomain(undefined);
+            }}>Cancel replacement</button>
+          </p>}
         </form>
         {preview && <>
-          <h3 className="font-semibold">Preview of {preview.row_count} rows</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">Preview of {preview.row_count} rows</h3>
+            <button className={input} disabled={pending} onClick={() => setPreview(undefined)}>Cancel preview</button>
+          </div>
+          <p>{preview.suggested_domain ? `Detected ${preview.suggested_domain} from matching headers.`
+            : "No unique full header match. Select a dataset type and confirm the mappings."}</p>
           {preview.duplicate_rows > 0 && <p>{preview.duplicate_rows} repeated source rows detected.</p>}
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
@@ -165,22 +256,109 @@ function AdminTools({ organization }: { organization: Organization }) {
             </table>
           </div>
           <label className="grid gap-1">Dataset type
-            <select className={input} value={domain} onChange={(event) => setDomain(event.target.value as Domain)}>
+            <select className={input} value={domain} disabled={pending || !!replacementDomain} onChange={(event) => {
+              const next = event.target.value as Domain | "";
+              setDomain(next);
+              setMapping(next ? preview.suggestions[next].mapping : {});
+            }}>
+              <option value="">Select a dataset type</option>
               {domains.map((value) => <option key={value}>{value}</option>)}
             </select>
           </label>
-          <form key={`${preview.id}:${domain}`} className="grid gap-3" onSubmit={submit}>
+          {domain && <form className="grid gap-3" onSubmit={submit}>
+            <p>{Object.keys(preview.suggestions[domain].mapping).length} of {fields.length} fields automatically matched.</p>
+            {preview.suggestions[domain].ambiguous.length > 0 && <p>Confirm ambiguous matches for {preview.suggestions[domain].ambiguous.join(", ")}.</p>}
+            {fields.some((field) => !mapping[field]) && <p>Missing required mappings for {fields.filter((field) => !mapping[field]).join(", ")}.</p>}
+            {duplicateColumns && <p role="alert">Assign each field to a different source column.</p>}
             <div className="grid gap-3 sm:grid-cols-2">
-              {preview.fields[domain].map((field) => <label key={field} className="grid gap-1">{field}
-                <select className={input} name={field} defaultValue={preview.headers.includes(field) ? field : ""} required>
+              {fields.map((field) => <label key={field} className="grid gap-1">{field}
+                <select className={input} name={field} value={mapping[field] ?? ""} required
+                  onChange={(event) => setMapping({ ...mapping, [field]: event.target.value })}>
                   <option value="">Select a column</option>
                   {preview.headers.map((header) => <option key={header}>{header}</option>)}
                 </select>
               </label>)}
             </div>
-            <button className={button} disabled={pending}>Validate and import snapshot</button>
-          </form>
+            <button className={button} disabled={pending || incomplete}>Validate and import snapshot</button>
+          </form>}
         </>}
+      </section>
+      <section className={panel}>
+        <div className="flex flex-wrap justify-between gap-3">
+          <h2 className="text-xl font-semibold">Uploaded files</h2>
+          <button className={input} disabled={pending} onClick={() => void run(refresh)}>Refresh upload history</button>
+        </div>
+        {uploads.length === 0 && <p>No uploads yet.</p>}
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-left text-sm">
+            <thead><tr>{["File", "Uploader and date", "Dataset", "Status", "Actions"].map((label) =>
+              <th className="p-2" key={label}>{label}</th>)}</tr></thead>
+            <tbody>{uploads.map((item) => <tr key={item.id} className="border-t">
+              <td className="p-2"><strong>{item.filename}</strong><br />{item.file_type.toUpperCase()} · {item.size_bytes.toLocaleString()} bytes</td>
+              <td className="p-2">{item.uploaded_by}<br />{new Date(item.created_at).toLocaleString()}</td>
+              <td className="p-2">{item.domain ?? "Unassigned"} · {item.row_count ?? "Unknown"} rows
+                {item.version_id && <div className="break-all text-xs">{item.version_id}</div>}</td>
+              <td className="p-2"><StatusBadge status={item.status === "staged" ? "uploaded" : item.status} /></td>
+              <td className="p-2"><div className="flex flex-wrap gap-2">
+                <button className={input} disabled={pending} onClick={() => void run(async () => {
+                  setReplacementDomain(undefined);
+                  openPreview(await api<Preview>(`${path}/datasets/uploads/${item.id}/preview`));
+                  uploadPanel.current?.scrollIntoView();
+                })}>Preview {item.filename}</button>
+                {item.job_id && <button className={input} disabled={pending} onClick={() => void run(async () => {
+                  setJob(await api<ImportJob>(`${path}/jobs/${item.job_id}`));
+                })}>Import details</button>}
+                {item.deletable && <>
+                  <button className={input} disabled={pending} onClick={() => {
+                    setReplacement(item); setReplacementDomain(undefined); uploadPanel.current?.scrollIntoView();
+                    fileInput.current?.focus();
+                  }}>Replace file</button>
+                  <button className={input} disabled={pending} onClick={() => setConfirmation({
+                    title: `Delete ${item.filename}?`,
+                    impact: "This removes the unused staging file and frees its storage quota. Analytics and history stay available.",
+                    action: async () => {
+                      await api(`${path}/datasets/uploads/${item.id}`, { method: "DELETE" });
+                      if (preview?.id === item.id) setPreview(undefined);
+                      if (replacement?.id === item.id) setReplacement(undefined);
+                      setToast("Upload deleted and staging quota released.");
+                      await refresh();
+                    },
+                  })}>Delete file</button>
+                </>}
+              </div></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+      </section>
+      <section className={panel}>
+        <h2 className="text-xl font-semibold">Dataset management</h2>
+        {versions.length === 0 && <p>No published datasets yet.</p>}
+        {versions.map((version) => <article key={version.id} className="grid gap-2 rounded border p-3">
+          <h3 className="font-semibold">{version.domain} · {version.status}</h3>
+          <p className="break-all text-sm">{version.filename} · {version.row_count} rows · {new Date(version.published_at).toLocaleString()}<br />Version {version.id}</p>
+          <div className="flex flex-wrap gap-2">
+            <button className={input} disabled={pending} onClick={() => void run(async () => {
+              setJob(await api<ImportJob>(`${path}/jobs/${version.id}`));
+            })}>Import details</button>
+            {version.status === "active" && <button className={input} disabled={pending} onClick={() => {
+              setReplacement(undefined); setReplacementDomain(version.domain); setPreview(undefined);
+              uploadPanel.current?.scrollIntoView(); fileInput.current?.focus();
+            }}>Upload replacement version</button>}
+            {(version.status === "active" || (version.status === "archived" && version.can_restore)) &&
+              <button className={input} disabled={pending} onClick={() => {
+                const archive = version.status === "active";
+                const action = archive ? "archive" : "restore";
+                setConfirmation({ title: `${archive ? "Archive" : "Restore"} ${version.filename}?`,
+                  impact: archive ? "The snapshot leaves current analytics. No previous version takes its place. Historical evidence stays available."
+                    : "This snapshot becomes the current dataset for new analytics. Historical evidence stays available.",
+                  action: async () => {
+                    await api(`${path}/datasets/versions/${version.id}/${action}`, { method: "POST" });
+                    setToast(archive ? "Dataset archived." : "Dataset restored.");
+                    await refresh();
+                  } });
+              }}>{version.status === "active" ? "Archive version" : "Restore version"}</button>}
+          </div>
+        </article>)}
       </section>
       <section className={panel}>
         <h2 className="text-xl font-semibold">Import history</h2>
@@ -191,10 +369,21 @@ function AdminTools({ organization }: { organization: Organization }) {
         </button>)}
         {job && <div aria-live="polite" className="rounded bg-slate-100 p-4">
           <p>{job.domain} import {job.status}{job.row_count !== null && ` · ${job.row_count} published rows`}</p>
-          {job.status === "queued" && <button className="mt-2 rounded border bg-white px-3 py-2" disabled={pending}
+          {job.status === "queued" && <div className="flex flex-wrap gap-2">
+            <button className="mt-2 rounded border bg-white px-3 py-2" disabled={pending}
             onClick={() => void run(async () => setJob(await api<ImportJob>(`${path}/jobs/${job.id}/retry`, {
               method: "POST",
-            })))}>Retry queued import</button>}
+            })))}>Retry queued import</button>
+            <button className={input} disabled={pending} onClick={() => setConfirmation({
+              title: `Cancel queued ${job.domain} import?`,
+              impact: "If the worker has already published this job, it cannot be cancelled. The source file and import record are retained.",
+              action: async () => {
+                setJob(await api<ImportJob>(`${path}/jobs/${job.id}/cancel`, { method: "POST" }));
+                await refresh();
+              },
+            })}>Cancel queued import</button>
+          </div>}
+          {job.status === "failed" && <p>Review the validation report, then correct the source file or choose a different mapping and submit it again.</p>}
           {job.duplicate && <p>This file and mapping already have an import record.</p>}
           {job.errors && <details open>
             <summary>Validation report ({job.errors.length})</summary>
@@ -205,6 +394,20 @@ function AdminTools({ organization }: { organization: Organization }) {
           </details>}
         </div>}
       </section>
+      <GlassModal open={!!confirmation} titleId="dataset-confirmation-title" onClose={() => setConfirmation(undefined)}>
+        {confirmation && <div className="grid gap-4">
+          <h2 id="dataset-confirmation-title" className="text-lg font-semibold">{confirmation.title}</h2>
+          <p>{confirmation.impact}</p>
+          <div className="flex justify-end gap-2">
+            <button className={input} autoFocus onClick={() => setConfirmation(undefined)}>Cancel</button>
+            <button className={button} onClick={() => {
+              const action = confirmation.action;
+              setConfirmation(undefined);
+              void run(action);
+            }}>Confirm</button>
+          </div>
+        </div>}
+      </GlassModal></>}
     </div>
   );
 }
@@ -227,22 +430,26 @@ function PublishedDatasets({ organization }: { organization: Organization }) {
   </section>;
 }
 
+function DatasetQuality({ orgId }: { orgId: string }) {
+  const [quality, setQuality] = useState<{ state: string; message: string }>();
+  useEffect(() => {
+    if (!orgId) return;
+    const controller = new AbortController();
+    void api<{ state: string; message: string } | null>("/reconciliation-summary?organization_id=" + orgId,
+      { signal: controller.signal }).then((result) => { if (result) setQuality(result); }).catch(() => {});
+    return () => controller.abort();
+  }, [orgId]);
+  return quality ? <section className="glass-card flex flex-wrap items-center justify-between gap-3">
+    <div><h2 className="font-semibold">Data quality</h2><p className="text-sm text-slate-600">{quality.message}</p></div>
+    <Link href="/reconciliation"><StatusBadge status={quality.state} /></Link>
+  </section> : null;
+}
+
 export default function Workspace() {
-  const router = useRouter();
-  const [identity, setIdentity] = useState<Identity>();
-  const [selected, setSelected] = useState("");
+  const { identity, orgId, selectOrg, reload } = useWorkspace();
+  const teamOnly = usePathname() === "/workspace/team";
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
-
-  useEffect(() => {
-    let active = true;
-    api<Identity>("/auth/me").then((result) => { if (active) setIdentity(result); }).catch((failure) => {
-      if (!active) return;
-      if (failure instanceof ApiError && failure.status === 401) router.replace("/login");
-      else setError(errorMessage(failure));
-    });
-    return () => { active = false; };
-  }, [router]);
 
   async function run(action: () => Promise<void>) {
     setPending(true);
@@ -252,35 +459,23 @@ export default function Workspace() {
     finally { setPending(false); }
   }
 
-  const organization = identity?.organizations.find((item) => item.id === selected) ?? identity?.organizations[0];
+  const organization = identity.organizations.find((item) => item.id === orgId);
 
-  return <main className="mx-auto grid max-w-5xl gap-5 px-6 py-10">
-    <header className="flex flex-wrap items-center justify-between gap-3">
-      <div><h1 className="text-3xl font-semibold">Workspace</h1><p>{identity?.email}</p></div>
-      {identity && <div className="flex flex-wrap items-center gap-3">
-      {organization && <Link className={button} href="/connectors">Data connectors</Link>}
-      {organization && <Link className={button} href="/analytics">Business analytics</Link>}
-      <button className={input} disabled={pending} onClick={() => void run(async () => {
-        await api("/auth/logout", { method: "POST" });
-        router.replace("/login");
-      })}>Sign out</button></div>}
-    </header>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {identity && <section className={panel}>
+  return <main className="module-page">
+    <header className="module-header"><h1>{teamOnly ? "Team & settings" : "Data sources"}</h1>
+      {!teamOnly && <p>Upload, validate, and manage the snapshots used in your analytics.</p>}</header>
+    {error && <p role="alert">{error}</p>}
+    {!teamOnly && <DatasetQuality orgId={orgId} key={orgId} />}
+    {(teamOnly || !organization) && <section className={panel}>
       <h2 className="text-xl font-semibold">Organizations</h2>
-      {organization && <label className="grid gap-1">Active organization
-        <select className={input} value={organization.id} onChange={(event) => setSelected(event.target.value)}>
-          {identity.organizations.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}
-        </select>
-      </label>}
       <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => {
         event.preventDefault();
         const form = event.currentTarget;
         const body = JSON.stringify(Object.fromEntries(new FormData(form)));
         void run(async () => {
           const created = await api<Organization>("/organizations", { method: "POST", body });
-          setIdentity(await api<Identity>("/auth/me"));
-          setSelected(created.id);
+          await reload();
+          selectOrg(created.id);
           form.reset();
         });
       }}>
@@ -295,8 +490,8 @@ export default function Workspace() {
         if (!/^[\da-f-]{36}$/i.test(id) || !token) { setError("Enter a valid invitation code."); return; }
         void run(async () => {
           await api(`/organizations/${id}/invitations/accept`, { method: "POST", body: JSON.stringify({ token }) });
-          setIdentity(await api<Identity>("/auth/me"));
-          setSelected(id);
+          await reload();
+          selectOrg(id);
           form.reset();
         });
       }}>
@@ -304,7 +499,7 @@ export default function Workspace() {
         <button className={button} disabled={pending}>Accept invitation</button>
       </form>
     </section>}
-    {organization?.role === "admin" && <AdminTools key={organization.id} organization={organization} />}
-    {organization && organization.role !== "admin" && <PublishedDatasets key={organization.id} organization={organization} />}
+    {organization?.role === "admin" && <AdminTools key={organization.id + teamOnly} organization={organization} teamOnly={teamOnly} />}
+    {organization && !teamOnly && organization.role !== "admin" && <PublishedDatasets key={organization.id} organization={organization} />}
   </main>;
 }

@@ -1,9 +1,12 @@
 "use client";
 
+import { useWorkspace } from "@/components/app-frame";
+
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Download, FileBarChart2 } from "lucide-react";
+import { StatusBadge } from "@/components/ui/glass";
 import { type FormEvent, useEffect, useRef, useState } from "react";
-import { api, ApiError, downloadPdf, type Identity, type Organization } from "@/lib/workspace-api";
+import { api, downloadPdf, type Organization } from "@/lib/workspace-api";
 
 type Source = { version: string; published_at: string };
 type Report = {
@@ -16,9 +19,9 @@ type Report = {
   error_code: string | null;
 };
 
-const box = "rounded-xl border border-slate-200 bg-white p-5 shadow-sm";
-const action = "rounded-md bg-teal-800 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-900 disabled:opacity-50";
-const field = "rounded-md border border-slate-300 bg-white px-3 py-2 text-sm";
+const box = "glass-card";
+const action = "glass-button glass-primary";
+const field = "glass-input";
 const labels = { sales: "Sales", inventory: "Inventory", payments: "Receivables" };
 const failures: Record<string, string> = {
   temporary_failure: "The worker encountered a temporary failure. Retry this report from history.",
@@ -112,6 +115,7 @@ function Reports({ org }: { org: Organization }) {
   }
 
   return <>
+    <div className="report-cover"><span className="metric-icon"><FileBarChart2 size={20} aria-hidden /></span><div><h2>Monthly Business Performance</h2><p>Executive PDF with KPIs, charts, and source evidence.</p></div></div>
     {canCreate && <form className={box + " grid gap-4"} onSubmit={submit}>
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="grid gap-1 text-sm font-medium">Template
@@ -146,11 +150,11 @@ function Reports({ org }: { org: Organization }) {
               <div>
                 <h3 className="font-medium">Monthly Business Performance</h3>
                 <p className="text-sm text-slate-600">{report.filters.start} to {report.filters.end} (end exclusive)</p>
-                <p className="mt-1 text-sm font-medium capitalize text-teal-800" role="status">{status}</p>
+                <p className="mt-1 text-sm font-medium capitalize text-teal-800" role="status"><StatusBadge status={status} /></p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {report.status === "completed" && !expired && <button disabled={busy} className={action}
-                  onClick={() => void run(() => download(report.id))}>Download PDF</button>}
+                  onClick={() => void run(() => download(report.id))}><Download size={16} aria-hidden /> Download PDF</button>}
                 {report.retry_available && canCreate && <button disabled={busy} className={field}
                   onClick={() => void run(async () => record(await api<Report>(
                     root + "/" + report.id + "/retry" + scope, { method: "POST" },
@@ -178,40 +182,10 @@ function Reports({ org }: { org: Organization }) {
 }
 
 export default function ReportsPage() {
-  const [identity, setIdentity] = useState<Identity>();
-  const [selected, setSelected] = useState("");
-  const [error, setError] = useState("");
-  const router = useRouter();
-  useEffect(() => {
-    let active = true;
-    api<Identity>("/auth/me").then((user) => { if (active) setIdentity(user); }).catch((failure: Error) => {
-      if (!active) return;
-      if (failure instanceof ApiError && failure.status === 401) router.replace("/login");
-      else setError(failure.message);
-    });
-    return () => { active = false; };
-  }, [router]);
-  const org = identity?.organizations.find((item) => item.id === selected) ?? identity?.organizations[0];
-  return <main className="mx-auto grid max-w-5xl gap-5 px-4 py-8 sm:px-8">
-    <header className="flex flex-wrap items-end justify-between gap-4">
-      <div>
-        <nav className="flex gap-4 text-sm font-semibold text-teal-800" aria-label="Workspace navigation">
-          <Link href="/schedules" className="hover:underline">Report schedules</Link>
-          <Link href="/analytics" className="hover:underline">Business analytics</Link>
-          <Link href="/ask" className="hover:underline">Ask AI</Link>
-          <Link href="/reconciliation" className="hover:underline">Data quality</Link>
-        </nav>
-        <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Reports</h1>
-      </div>
-      {org && <label className="grid gap-1 text-sm">Organization
-        <select value={org.id} className={field} onChange={(event) => setSelected(event.target.value)}>
-          {identity?.organizations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select>
-      </label>}
-    </header>
-    {error && <p role="alert" className="text-red-700">{error}</p>}
-    {!identity && !error && <p role="status">Loading workspace…</p>}
-    {identity && !org && <p className={box}>Create or join an organization in the <Link className="underline" href="/workspace">workspace</Link>.</p>}
-    {org && <Reports org={org} key={org.id} />}
+  const { identity, orgId } = useWorkspace();
+  const org = identity.organizations.find((item) => item.id === orgId);
+  return <main className="module-page">
+    <header className="module-header"><h1>Executive reports</h1></header>
+    {org ? <Reports org={org} key={org.id} /> : <p className="glass-card">Create or join an organization in <Link href="/workspace/team" className="underline">Team &amp; settings</Link>.</p>}
   </main>;
 }
