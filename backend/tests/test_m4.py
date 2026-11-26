@@ -212,6 +212,14 @@ def test_history_reporting_role_and_tenant_boundaries(evaluated) -> None:
         assert not connection.execute(text(
             "SELECT has_table_privilege(current_user,'reporting.rows','INSERT')"
         )).scalar_one()
+    version = result["evidence"]["dataset_versions"][0]
+    lifecycle = f"/api/v1/organizations/{organization}/datasets/versions/{version}"
+    assert first.post(lifecycle + "/archive").status_code == 204
+    try:
+        assert first.get(target, params=scope).json()["evidence"] == result["evidence"]
+        assert first.post(ENDPOINT, json={**body, "dataset_ids": [version]}).json()["status"] == "insufficient_data"
+    finally:
+        assert first.post(lifecycle + "/restore").status_code == 204
 
 
 def test_provider_outage_keeps_dashboard_operational(evaluated, monkeypatch) -> None:

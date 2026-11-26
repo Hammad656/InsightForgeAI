@@ -48,7 +48,7 @@ def seed() -> dict[str, dict[str, Any]]:
                 )} for index, row in enumerate(LEDGERS[domain], 1)])
                 db.execute(text("""
                     UPDATE app.datasets SET active_version=:id
-                    WHERE org_id=:org AND domain=:domain AND active_version IS NULL
+                    WHERE org_id=:org AND domain=:domain AND active_version IS NULL AND lifecycle_changed_at IS NULL
                 """), args)
         set_org(db, ORG)
         sources = db.execute(text("""
